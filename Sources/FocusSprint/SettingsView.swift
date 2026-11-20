@@ -135,13 +135,16 @@ struct SettingsView: View {
             }
             Section("Cloud storage (MongoDB Atlas)") {
                 LabeledContent("Upload status", value: statusText)
-                SecureField("Connection string for the insert-only user (leave blank to keep the current one)", text: $mongoURI)
+                field("Connection string for the insert-only user", hint: "Leave blank to keep the current one",
+                      placeholder: "mongodb+srv://user:password@cluster.mongodb.net/focus", text: $mongoURI, secret: true)
                 Text("Stored where only an administrator can read it. Records wait on this Mac until Atlas confirms each one.")
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section("Website labels and parent emails") {
-                TextField("Family service address, e.g. https://youngwonks-focus.onrender.com", text: $serviceURL)
-                SecureField("Device token (leave both blank to keep the current ones)", text: $deviceToken)
+                field("Family service address", hint: "Fill in both, or leave both blank to keep the current ones",
+                      placeholder: "https://your-service.onrender.com", text: $serviceURL, secret: false)
+                field("Device token", hint: "The DEVICE_TOKEN value from the service's environment settings",
+                      placeholder: "Paste the token here", text: $deviceToken, secret: true)
                 Text("New websites are labelled productive or distraction by Claude through this service. It also reviews \"needed for work\" requests and emails you one summary at the end of each day. Nothing is ever blocked.")
                     .font(.caption).foregroundStyle(.secondary)
             }
@@ -153,7 +156,8 @@ struct SettingsView: View {
                 if let message { Text(message).foregroundStyle(messageIsError ? .red : .green) }
             }
             Section("Viewing cloud history on this Mac") {
-                SecureField("Connection string for a read-only user", text: $viewerURI)
+                field("Connection string for a read-only user", hint: "Saved in this user's keychain",
+                      placeholder: "mongodb+srv://viewer:password@cluster.mongodb.net/focus", text: $viewerURI, secret: true)
                 Button("Save for this user") {
                     Keychain.set("viewerURI", viewerURI.trimmingCharacters(in: .whitespacesAndNewlines))
                     message = "Saved. Open History and choose Cloud."
@@ -170,6 +174,25 @@ struct SettingsView: View {
             appsText = config.distractionApps.joined(separator: "\n")
         }
         .onReceive(statusTimer) { _ in status = HelperStatus.load() }
+    }
+
+    /// A label above a full-width box. (A plain Form text field puts its title on the left and leaves
+    /// the box on the right with no border, which made these look like there was nowhere to type.)
+    private func field(_ label: String, hint: String, placeholder: String, text: Binding<String>, secret: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(label).font(.headline)
+            Group {
+                if secret {
+                    SecureField("", text: text, prompt: Text(placeholder))
+                } else {
+                    TextField("", text: text, prompt: Text(placeholder))
+                }
+            }
+            .labelsHidden()
+            .textFieldStyle(.roundedBorder)
+            Text(hint).font(.caption).foregroundStyle(.secondary)
+        }
+        .padding(.vertical, 2)
     }
 
     private var statusText: String {
