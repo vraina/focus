@@ -55,6 +55,19 @@ Claude labels each search as work, distraction or personal (during a sprint, jud
 - **Personal** searches (health, feelings, relationships, identity and the like) are counted with no words and no
   hint of the topic, on the Mac and in the database, so a student can still look for help.
 
+### Parent dashboard (web)
+
+The service has a read-only dashboard at its own address, for example `https://your-service.onrender.com/`.
+Sign in with `PARENT_EMAIL` and `PARENT_PASSWORD`; until `PARENT_PASSWORD` is set the dashboard stays off.
+
+- **Days:** the last 14 days, each with its distraction level, time away, switches and distraction searches.
+- **A day:** totals, sprints, web searches, "needed for work" requests and every switch away, newest first, with the
+  captured pictures. Clicking a picture opens a viewer with the date, start, time away and end, and previous / next.
+- **Websites:** how each site is treated, with a link to change it.
+
+It shows what the Mac has uploaded to Atlas, so the Mac's connection string and the service's `MONGODB_DB` must
+point at the same database. Eight wrong passwords from one address lock sign-in for 15 minutes.
+
 ### Deploying the service
 
 `render.yaml` (at the top of the repository) describes it. In Render: New → Blueprint → this repository, then fill in the variables marked

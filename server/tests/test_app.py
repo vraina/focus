@@ -8,7 +8,7 @@ from pymongo import MongoClient
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 os.environ.update(SECRET_KEY="test-secret", DEVICE_TOKEN="test-device", PARENT_EMAIL="parent@example.com",
-                  PUBLIC_URL="https://focus.example.com")
+                  PUBLIC_URL="http://localhost", PARENT_PASSWORD="test-pass", TIMEZONE="UTC")
 from app import create_app  # noqa: E402
 
 AUTH = {"Authorization": "Bearer test-device"}
@@ -153,7 +153,7 @@ def test_daily_digest(ctx):
     assert "Approved for a while" in body and "for 45 min" in body and "Not approved" in body
     assert body.index("i need it") < body.index("Physics lecture")  # newest request first
     assert "A lecture is a real need." in body and "khanacademy.org" in body
-    assert "https://focus.example.com/decide?t=" in body and "a=block" not in body
+    assert "http://localhost/decide?t=" in body and "a=block" not in body
 
 
 def _token(emails):
@@ -226,3 +226,86 @@ def test_searches_in_daily_digest(ctx):
     assert "NBA scores &lt;tonight&gt;" in body and "Algebra homework" in body
     assert "<b>1</b> for work" in body and "<b>1</b> private" in body
     assert "anxiety" not in body and "photosynthesis" not in body
+
+
+# --- Parent dashboard ---------------------------------------------------------------------------
+
+import re
+from datetime import datetime, timezone
+
+
+def sign_in(client, password="test-pass", email="parent@example.com"):
+    page = client.get("/login")
+    token = re.search(r'name="csrf" value="([^"]+)"', page.get_data(as_text=True)).group(1)
+    return client.post("/login", data={"csrf": token, "email": email, "password": password})
+
+
+def seed_day(db):
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    at = lambda s: now.replace(hour=10, minute=0, second=s).strftime("%Y-%m-%dT%H:%M:%SZ")
+    db["sprintStarts"].insert_one({"_id": "s1", "task": "Algebra <b>homework</b>", "user": "sam", "device": "Mac",
+                                   "plannedSeconds": 1500, "startedAt": at(0)})
+    db["sprintEnds"].insert_one({"_id": "s1", "endedAt": now.replace(hour=10, minute=25, second=0).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                                 "status": "completed", "awaySeconds": 150.0, "switchCount": 2})
+    db["events"].insert_many([
+        {"_id": "s1-e1", "sprintId": "s1", "seq": 1, "startedAt": at(10), "endedAt": at(40), "durationSeconds": 30.0,
+         "appName": "Google Chrome", "host": "espn.com", "title": "<script>alert(1)</script>", "category": "distraction",
+         "media": [{"role": "start", "kind": "image", "file": "e1-start.jpg"}]},
+        {"_id": "s1-e2", "sprintId": "s1", "seq": 2, "startedAt": at(50), "endedAt": at(55), "durationSeconds": 120.0,
+         "appName": "Messages", "title": "", "category": "offTask", "media": []},
+    ])
+    db["media"].insert_one({"_id": "s1/e1-start.jpg", "sprintId": "s1", "file": "e1-start.jpg", "data": b"\xff\xd8fakejpeg"})
+    return now.strftime("%Y-%m-%d")
+
+
+def test_dashboard_requires_sign_in(ctx):
+    client, db, *_ = ctx
+    day = seed_day(db)
+    for path in ("/dashboard", f"/dashboard/day/{day}", "/dashboard/sites", "/dashboard/media/s1/e1-start.jpg"):
+        r = client.get(path)
+        assert r.status_code == 302 and "/login" in r.headers["Location"], path
+    assert sign_in(client, password="wrong").status_code == 401
+    assert sign_in(client, email="someone@else.com").status_code == 401
+    assert client.get("/dashboard").status_code == 302
+    # A sign-in form posted without the page's token is refused.
+    assert client.post("/login", data={"email": "parent@example.com", "password": "test-pass"}).status_code == 400
+
+
+def test_dashboard_shows_the_day(ctx):
+    client, db, *_ = ctx
+    day = seed_day(db)
+    client.post("/api/search", json={"query": "NBA scores", "engine": "google.com"}, headers=AUTH)
+    assert sign_in(client).status_code == 302
+
+    overview = client.get("/dashboard").get_data(as_text=True)
+    assert "Today" in overview and "10%" in overview and "2 switches" in overview  # 150s away of 1500s
+
+    page = client.get(f"/dashboard/day/{day}").get_data(as_text=True)
+    assert "espn.com" in page and "10:00:10 AM" in page and "2m 00s" in page and "90% focused" in page
+    assert page.index("Messages") < page.index("espn.com")  # newest switch first
+    assert "NBA scores" in page and "/dashboard/media/s1/e1-start.jpg" in page
+    # Text typed by the student or taken from a page title is never run as HTML.
+    assert "<script>alert(1)</script>" not in page and "&lt;script&gt;" in page
+    assert "Algebra <b>homework</b>" not in page
+
+    picture = client.get("/dashboard/media/s1/e1-start.jpg")
+    assert picture.status_code == 200 and picture.data.startswith(b"\xff\xd8") and picture.mimetype == "image/jpeg"
+    assert "private" in picture.headers["Cache-Control"]
+    assert client.get("/dashboard/media/s1/missing.jpg").status_code == 404
+    assert client.get("/dashboard/day/not-a-date").status_code == 404
+
+    client.post("/api/classify", json={"host": "youtube.com"}, headers=AUTH)
+    sites = client.get("/dashboard/sites").get_data(as_text=True)
+    assert "youtube.com" in sites and "/decide?t=" in sites
+
+
+def test_sign_out_and_lockout(ctx):
+    client, db, *_ = ctx
+    sign_in(client)
+    token = re.search(r'name="csrf" value="([^"]+)"', client.get("/dashboard").get_data(as_text=True)).group(1)
+    assert client.post("/logout", data={"csrf": token}).status_code == 302
+    assert client.get("/dashboard").status_code == 302
+    for _ in range(8):
+        assert sign_in(client, password="guess").status_code == 401
+    # After eight wrong tries even the right password has to wait.
+    assert sign_in(client).status_code == 429

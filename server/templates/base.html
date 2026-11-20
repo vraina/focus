@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>{% block title %}YoungWonks Focus{% endblock %}</title>
+<style>
+:root{--brand:#5e57f0;--brand2:#29adda;--good:#21ad70;--warn:#f09921;--bad:#e6474d;--ink:#1a1b1f;--soft:#6b6f7a;
+  --canvas:#f4f5f7;--surface:#ffffff;--line:rgba(0,0,0,.08)}
+@media (prefers-color-scheme: dark){:root{--ink:#f2f3f5;--soft:#a0a4ae;--canvas:#17181c;--surface:#22242a;--line:rgba(255,255,255,.10)}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--canvas);color:var(--ink);font:15px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif}
+a{color:var(--brand);text-decoration:none}
+header.bar{background:var(--surface);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5}
+header.bar .in{max-width:980px;margin:0 auto;padding:10px 16px;display:flex;align-items:center;gap:18px}
+.logo{width:30px;height:30px;border-radius:8px;background:linear-gradient(135deg,var(--brand),var(--brand2));flex:none}
+.brand{font-weight:700;margin-right:auto;color:var(--ink)}
+nav a{color:var(--soft);font-weight:600;margin-left:14px} nav a.on{color:var(--brand)}
+.linkbtn{background:none;border:0;color:var(--soft);font:inherit;font-weight:600;cursor:pointer;margin-left:14px;padding:0}
+main{max-width:980px;margin:0 auto;padding:22px 16px 60px}
+h1{font-size:28px;margin:0 0 4px;letter-spacing:-.3px} h2{font-size:12px;letter-spacing:.6px;text-transform:uppercase;color:var(--soft);margin:26px 0 10px}
+.muted{color:var(--soft)} .small{font-size:13px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:16px;box-shadow:0 2px 6px rgba(0,0,0,.04)}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-top:16px}
+.tile .k{font-size:12px;color:var(--soft);font-weight:600} .tile .v{font-size:28px;font-weight:700;font-variant-numeric:tabular-nums;margin-top:2px}
+.good{color:var(--good)} .warn{color:var(--warn)} .bad{color:var(--bad)}
+.pill{display:inline-block;font-size:11px;font-weight:700;padding:3px 9px;border-radius:99px;background:rgba(0,0,0,.07);color:var(--soft);white-space:nowrap}
+.pill.good{background:rgba(33,173,112,.14);color:var(--good)} .pill.warn{background:rgba(240,153,33,.16);color:var(--warn)}
+.pill.bad{background:rgba(230,71,77,.14);color:var(--bad)} .pill.brand{background:rgba(94,87,240,.13);color:var(--brand)}
+.stack>*+*{margin-top:12px}
+.row{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.spread{margin-left:auto}
+.num{font-variant-numeric:tabular-nums;font-weight:700}
+.btn{display:inline-block;background:linear-gradient(135deg,var(--brand),var(--brand2));color:#fff;font-weight:700;border:0;border-radius:10px;padding:11px 16px;font-size:15px;cursor:pointer}
+.ghost{display:inline-block;border:1px solid var(--line);border-radius:9px;padding:7px 12px;color:var(--ink);font-weight:600;background:var(--surface)}
+.ghost.off{opacity:.35;pointer-events:none}
+</style>
+{% block head %}{% endblock %}
+</head>
+<body>
+{% if session.get('parent') %}
+<header class="bar"><div class="in">
+  <span class="logo"></span><a class="brand" href="{{ url_for('overview') }}">YoungWonks Focus</a>
+  <nav>
+    <a href="{{ url_for('overview') }}" class="{{ 'on' if active == 'days' }}">Days</a>
+    <a href="{{ url_for('sites_view') }}" class="{{ 'on' if active == 'sites' }}">Websites</a>
+  </nav>
+  <form method="post" action="{{ url_for('logout') }}"><input type="hidden" name="csrf" value="{{ csrf_token() }}"><button class="linkbtn">Sign out</button></form>
+</div></header>
+{% endif %}
+<main>{% block body %}{% endblock %}</main>
+</body>
+</html>

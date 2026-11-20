@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Sign in · YoungWonks Focus{% endblock %}
+{% block body %}
+<div style="max-width:380px;margin:8vh auto 0">
+  <div class="card" style="padding:26px">
+    <div class="row" style="margin-bottom:16px"><span class="logo" style="width:40px;height:40px;border-radius:11px"></span>
+      <div><div style="font-weight:700;font-size:18px">YoungWonks Focus</div><div class="muted small">Parent dashboard</div></div></div>
+    {% if error %}<p class="bad" style="font-weight:600;margin:0 0 12px">{{ error }}</p>{% endif %}
+    {% if not disabled %}
+    <form method="post">
+      <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+      <label class="small muted" for="email">Email</label>
+      <input id="email" name="email" type="email" autocomplete="username" required autofocus
+             style="width:100%;padding:10px 12px;margin:4px 0 12px;border-radius:9px;border:1px solid var(--line);background:var(--canvas);color:var(--ink);font:inherit">
+      <label class="small muted" for="password">Password</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" required
+             style="width:100%;padding:10px 12px;margin:4px 0 16px;border-radius:9px;border:1px solid var(--line);background:var(--canvas);color:var(--ink);font:inherit">
+      <button class="btn" style="width:100%">Sign in</button>
+    </form>
+    {% endif %}
+  </div>
+  <p class="muted small" style="text-align:center;margin-top:14px">Read-only view of what the Mac app records. Nothing is ever blocked.</p>
+</div>
+{% endblock %}

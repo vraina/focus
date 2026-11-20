@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% set active = 'sites' %}
+{% block title %}Websites · YoungWonks Focus{% endblock %}
+{% block body %}
+<h1>Websites</h1>
+<p class="muted">How each website seen so far is treated. "Change" opens the page where you can always allow it or keep it as a distraction.</p>
+<div class="stack" style="margin-top:18px">
+{% for s in sites %}
+  <div class="card row">
+    <div style="flex:1;min-width:200px"><div style="font-weight:700">{{ s.host }}</div>
+      {% if s.reason %}<div class="muted small">{{ s.reason }}</div>{% endif %}</div>
+    {% if s.window %}<span class="pill brand">Approved for now</span>{% endif %}
+    <span class="pill {{ 'good' if s.raw in ('productive', 'allowed') else 'bad' }}">{{ s.state }}</span>
+    <a class="ghost" href="{{ s.link }}">Change</a>
+  </div>
+{% else %}
+  <div class="card muted">No websites have been labelled yet.</div>
+{% endfor %}
+</div>
+{% endblock %}

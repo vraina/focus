@@ -13,7 +13,8 @@ DECISION_COLOR = {"approve_temporary": "#15803d", "approve_permanent": "#15803d"
 
 
 def digest_email(day_label: str, requests: list[dict], new_sites: list[dict], link_for,
-                 search_counts: dict | None = None, distraction_searches: list[dict] | None = None) -> tuple[str, str]:
+                 search_counts: dict | None = None, distraction_searches: list[dict] | None = None,
+                 dashboard_url: str = "") -> tuple[str, str]:
     """`link_for(host)` gives the page where the parent can overrule a site's label."""
     e = html.escape
     approved = sum(1 for r in requests if r["decision"] != "deny")
@@ -60,6 +61,9 @@ def digest_email(day_label: str, requests: list[dict], new_sites: list[dict], li
 <td style="padding:5px 0;vertical-align:top"><b>{e(x.get("text", ""))}</b><span style="color:#666">{during}</span><br>
 <span style="color:#444">{e(x.get("reason", ""))}</span></td></tr>''')
             parts.append("</table>")
+    if dashboard_url:
+        parts.append(f'''<p style="margin:22px 0 0"><a href="{e(dashboard_url)}" style="display:inline-block;padding:10px 16px;border-radius:6px;
+background:#5e57f0;color:#ffffff;text-decoration:none;font-weight:600">Open the full day, with pictures</a></p>''')
     parts.append("</div>")
     return subject, "".join(parts)
 

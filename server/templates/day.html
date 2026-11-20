@@ -1,0 +1,163 @@
+{% extends "base.html" %}
+{% set active = 'days' %}
+{% block title %}{{ title }} · YoungWonks Focus{% endblock %}
+{% block head %}
+<style>
+.shots{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin-top:12px}
+.shot{position:relative;display:block;border:1px solid var(--line);border-radius:10px;overflow:hidden;background:#000;cursor:zoom-in;padding:0;width:100%}
+.shot img{display:block;width:100%;height:auto} .shot .tag{position:absolute;left:8px;top:8px;background:rgba(0,0,0,.6);color:#fff;font-size:11px;font-weight:700;padding:3px 8px;border-radius:99px}
+.shot .play{display:flex;align-items:center;justify-content:center;height:150px;color:#fff;font-size:40px}
+.figs{display:flex;gap:26px;flex-wrap:wrap;margin-top:12px} .figs .k{font-size:11px;letter-spacing:.6px;text-transform:uppercase;color:var(--soft);font-weight:700}
+.figs .v{font-size:21px;font-weight:700;font-variant-numeric:tabular-nums}
+#viewer{position:fixed;inset:0;background:rgba(0,0,0,.93);z-index:20;display:none;flex-direction:column;padding:16px;gap:12px;color:#fff}
+#viewer.open{display:flex}
+#viewer .top{display:flex;align-items:center;gap:10px;flex-wrap:wrap} #viewer .site{font-size:19px;font-weight:700}
+#viewer .mid{flex:1;display:flex;align-items:center;gap:10px;min-height:0}
+#viewer .mid .frame{flex:1;height:100%;display:flex;align-items:center;justify-content:center;min-width:0}
+#viewer img,#viewer video{max-width:100%;max-height:100%;border-radius:10px}
+#viewer button.round{width:44px;height:44px;border-radius:50%;border:0;background:rgba(255,255,255,.16);color:#fff;font-size:20px;cursor:pointer;flex:none}
+#viewer button.round:disabled{opacity:.25;cursor:default}
+#viewer .info{display:flex;gap:26px;flex-wrap:wrap;background:rgba(255,255,255,.10);border-radius:14px;padding:12px 18px}
+#viewer .info .k{font-size:10px;letter-spacing:.6px;text-transform:uppercase;opacity:.6;font-weight:700} #viewer .info .v{font-size:17px;font-weight:700;font-variant-numeric:tabular-nums}
+#viewer .vp{background:rgba(255,255,255,.18);font-size:11px;font-weight:700;padding:3px 9px;border-radius:99px}
+</style>
+{% endblock %}
+{% block body %}
+<div class="row">
+  <div><h1>{{ title }}</h1><div class="muted">The whole day: sprints, and time outside them. Newest first.</div></div>
+  <div class="spread row">
+    <a class="ghost" href="{{ url_for('day_view', day=previous) }}">‹ Earlier</a>
+    <a class="ghost {{ '' if following else 'off' }}" href="{{ url_for('day_view', day=following) if following else '#' }}">Later ›</a>
+  </div>
+</div>
+
+<div class="tiles">
+  <div class="card tile"><div class="k">Distracted</div><div class="v {{ totals.level }}">{{ totals.percent }}%</div></div>
+  <div class="card tile"><div class="k">Switches</div><div class="v">{{ totals.switches }}</div></div>
+  <div class="card tile"><div class="k">Time away</div><div class="v">{{ duration(totals.away) }}</div></div>
+  <div class="card tile"><div class="k">Tracked</div><div class="v">{{ duration(totals.tracked) }}</div></div>
+</div>
+
+{% if sprints %}
+<h2>Sprints</h2>
+<div class="stack">
+{% for s in sprints %}
+  <div class="card row">
+    <div style="flex:1;min-width:200px"><div style="font-weight:700">{{ s.task }}</div>
+      <div class="muted small">{{ s.clock }} · {{ s.planned // 60 }} min planned · {{ s.who }}</div></div>
+    <span class="pill {{ 'good' if s.status == 'Completed' else ('bad' if s.status == 'Interrupted' else 'warn') }}">{{ s.status }}</span>
+    <div class="small muted">{{ s.events|length }} switches · {{ duration(s.away) }} away</div>
+    <div class="num {{ level(1 - s.focus / 100) }}" style="font-size:20px;min-width:92px;text-align:right">{{ s.focus }}% focused</div>
+  </div>
+{% endfor %}
+</div>
+{% endif %}
+
+{% if search_counts.work or search_counts.distraction or search_counts.personal %}
+<h2>Web searches</h2>
+<div class="card">
+  <div class="row"><span class="pill good">{{ search_counts.work }} work</span><span class="pill {{ 'bad' if search_counts.distraction else '' }}">{{ search_counts.distraction }} distraction</span>
+    {% if search_counts.personal %}<span class="pill">{{ search_counts.personal }} private</span>{% endif %}</div>
+  {% for x in searches %}
+    <div class="row" style="margin-top:12px;align-items:flex-start">
+      <div style="flex:1"><div style="font-weight:700">{{ x.text }}</div><div class="muted small">{{ x.reason }}{% if x.task %} · during: {{ x.task }}{% endif %}</div></div>
+      <div class="muted small num">{{ x.localTime }}</div>
+    </div>
+  {% endfor %}
+  <p class="muted small" style="margin:12px 0 0">Only distraction searches are listed. Work searches are counted, and private topics are never recorded.</p>
+</div>
+{% endif %}
+
+{% if requests %}
+<h2>"Needed for work" requests</h2>
+<div class="stack">
+{% for r in requests %}
+  <div class="card">
+    <div class="row"><b>{{ r.host }}</b><span class="muted small">{{ r.localTime }} · {{ r.who }}</span>
+      <span class="spread pill {{ 'bad' if r.decision == 'deny' else 'good' }}">{{ r.decisionLabel }}{% if r.decision == 'approve_temporary' %} · {{ r.grantedMinutes }} min{% endif %}</span></div>
+    <div style="margin:8px 0;padding:9px 11px;background:var(--canvas);border-radius:8px">{{ r.reason }}</div>
+    <div class="muted small">{{ r.explanation }}</div>
+  </div>
+{% endfor %}
+</div>
+{% endif %}
+
+<h2>Every switch away</h2>
+<div class="stack">
+{% for e in switches %}
+  <div class="card">
+    <div class="row">
+      <div style="flex:1;min-width:180px"><div style="font-weight:700;font-size:16px">{{ e.site }}</div>
+        <div class="muted small">{{ e.detail }}{% if e.during %}{{ ' · ' if e.detail }}during: {{ e.during }}{% endif %}</div></div>
+      <span class="pill {{ 'bad' if e.category == 'distraction' else 'warn' }}">{{ 'Distraction' if e.category == 'distraction' else 'Off task' }}</span>
+    </div>
+    <div class="figs">
+      <div><div class="k">Started</div><div class="v">{{ e.started }}</div></div>
+      <div><div class="k">Away for</div><div class="v {{ 'bad' if e.category == 'distraction' else 'warn' }}">{{ e.away }}</div></div>
+      <div><div class="k">Ended</div><div class="v">{{ e.ended }}</div></div>
+    </div>
+    {% if e.media %}
+    <div class="shots">
+      {% for m in e.media %}
+      <button class="shot" type="button" data-src="{{ m.url }}" data-kind="{{ m.kind }}" data-role="{{ m.role }}" data-site="{{ e.site }}"
+              data-detail="{{ e.detail }}" data-category="{{ 'Distraction' if e.category == 'distraction' else 'Off task' }}"
+              data-started="{{ e.started }}" data-away="{{ e.away }}" data-ended="{{ e.ended }}">
+        {% if m.kind == 'video' %}<span class="play">▶</span>{% else %}<img src="{{ m.url }}" loading="lazy" alt="{{ m.role }} on {{ e.site }}">{% endif %}
+        <span class="tag">{{ m.role }}</span>
+      </button>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </div>
+{% else %}
+  <div class="card"><b class="good">No switches away recorded this day.</b></div>
+{% endfor %}
+</div>
+
+<div id="viewer" role="dialog" aria-label="Picture viewer">
+  <div class="top"><span class="site" id="v-site"></span><span class="vp" id="v-category"></span><span class="vp" id="v-role"></span>
+    <span class="muted" id="v-detail" style="color:rgba(255,255,255,.7);font-size:13px"></span>
+    <span style="margin-left:auto;font-weight:700" id="v-count"></span><button class="round" id="v-close" title="Close (Esc)">✕</button></div>
+  <div class="mid"><button class="round" id="v-prev" title="Previous">‹</button><div class="frame" id="v-frame"></div><button class="round" id="v-next" title="Next">›</button></div>
+  <div class="info">
+    <div><div class="k">Date</div><div class="v">{{ title }}</div></div>
+    <div><div class="k">Started</div><div class="v" id="v-started"></div></div>
+    <div><div class="k">Away for</div><div class="v" id="v-away"></div></div>
+    <div><div class="k">Ended</div><div class="v" id="v-ended"></div></div>
+  </div>
+</div>
+<script>
+(function () {
+  var shots = Array.prototype.slice.call(document.querySelectorAll('.shot'));
+  var viewer = document.getElementById('viewer'), frame = document.getElementById('v-frame'), at = 0;
+  function set(id, text) { document.getElementById(id).textContent = text; }
+  function show(i) {
+    at = i;
+    var d = shots[i].dataset, node;
+    frame.textContent = '';
+    if (d.kind === 'video') { node = document.createElement('video'); node.controls = true; node.autoplay = true; }
+    else { node = document.createElement('img'); node.alt = d.role + ' on ' + d.site; }
+    node.src = d.src;
+    frame.appendChild(node);
+    set('v-site', d.site); set('v-category', d.category); set('v-role', d.role); set('v-detail', d.detail);
+    set('v-started', d.started); set('v-away', d.away); set('v-ended', d.ended);
+    set('v-count', (i + 1) + ' of ' + shots.length);
+    document.getElementById('v-prev').disabled = i === 0;
+    document.getElementById('v-next').disabled = i === shots.length - 1;
+    viewer.classList.add('open');
+  }
+  function close() { viewer.classList.remove('open'); frame.textContent = ''; }
+  shots.forEach(function (el, i) { el.addEventListener('click', function () { show(i); }); });
+  document.getElementById('v-prev').addEventListener('click', function () { if (at > 0) show(at - 1); });
+  document.getElementById('v-next').addEventListener('click', function () { if (at < shots.length - 1) show(at + 1); });
+  document.getElementById('v-close').addEventListener('click', close);
+  viewer.addEventListener('click', function (e) { if (e.target === viewer || e.target.classList.contains('mid') || e.target.classList.contains('frame')) close(); });
+  document.addEventListener('keydown', function (e) {
+    if (!viewer.classList.contains('open')) return;
+    if (e.key === 'Escape') close();
+    if (e.key === 'ArrowLeft' && at > 0) show(at - 1);
+    if (e.key === 'ArrowRight' && at < shots.length - 1) show(at + 1);
+  });
+})();
+</script>
+{% endblock %}

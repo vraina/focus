@@ -24,6 +24,7 @@ from pymongo import MongoClient
 from pymongo.errors import DuplicateKeyError
 
 import classifier
+import dashboard
 import mailer
 
 # Local development: values come from server/.env (never committed). On Render they are real environment variables.
@@ -66,6 +67,7 @@ def create_app(db=None, classify=classifier.classify, review=classifier.review_r
                start_scheduler=False, label_search=classifier.classify_search) -> Flask:
     app = Flask(__name__)
     secret = os.environ.get("SECRET_KEY", "")
+    app.secret_key = secret  # signs the dashboard's sign-in cookie
     device_token = os.environ.get("DEVICE_TOKEN", "")
     if not secret or not device_token:
         raise RuntimeError("SECRET_KEY and DEVICE_TOKEN must be set")
@@ -256,7 +258,8 @@ def create_app(db=None, classify=classifier.classify, review=classifier.review_r
         base = os.environ.get("PUBLIC_URL", "").rstrip("/")
         subject, body_html = mailer.digest_email(start.strftime("%A %-d %B"), entries, new_sites,
                                                  lambda host: f"{base}/decide?t={signer.dumps(host)}",
-                                                 search_counts=counts, distraction_searches=off_topic)
+                                                 search_counts=counts, distraction_searches=off_topic,
+                                                 dashboard_url=f"{base}/dashboard/day/{day}" if os.environ.get("PARENT_PASSWORD") else "")
         if send_email(os.environ.get("PARENT_EMAIL", ""), subject, body_html):
             digests.update_one({"_id": day}, {"$set": {"result": "sent", "sentAt": now()}}, upsert=True)
             return "sent"
@@ -287,6 +290,8 @@ def create_app(db=None, classify=classifier.classify, review=classifier.review_r
 
     if start_scheduler:
         threading.Thread(target=scheduler, daemon=True, name="digest").start()
+
+    dashboard.register(app, db, zone, signer)
 
     @app.get("/api/sites")
     def api_sites():

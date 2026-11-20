@@ -24,7 +24,9 @@ services:
         sync: false
       - key: MAIL_FROM           # e.g. YoungWonks Focus <focus@yourdomain.com>, on a domain verified in Resend
         sync: false
-      - key: PARENT_EMAIL
+      - key: PARENT_EMAIL        # receives the daily summary; also the sign-in email for the dashboard
+        sync: false
+      - key: PARENT_PASSWORD     # sign-in password for the web dashboard; leave unset to keep the dashboard off
         sync: false
       - key: PUBLIC_URL          # e.g. https://youngwonks-focus.onrender.com, used for the links in the email
         sync: false
