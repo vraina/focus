@@ -673,6 +673,10 @@ def test_a_form_without_its_cookie_comes_back_with_an_explanation(w):
     page = stranger.get(reply.headers["Location"]).get_data(as_text=True)
     assert "Nothing was saved" in page and f'value="{code}"' in page
     assert w.db["accounts"].find_one({"email": "pat@example.com"}) is None and w.db["invites"].find_one({"_id": code})["usedBy"] is None
+    # With no cookie at all, no value passes, whatever is sent.
+    for guess in ("x", "", "None"):
+        assert w.browser().post("/signup", data={"csrf": guess, "invite": code}).status_code == 303
+        assert w.browser().post("/login", data={"csrf": guess, "email": OWNER, "password": "owner-password-1"}).status_code == 303
     # Trying again from the page they were sent back to works.
     again = stranger.post("/signup", data={"csrf": w.csrf(stranger, "/signup"), "invite": code, "name": "Pat",
                                            "email": "pat@example.com", "password": "family-password-1"})

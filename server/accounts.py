@@ -179,7 +179,8 @@ def register(app, svc):
         """Every form carries a token that must match the one in the visitor's cookie. When it does not (the page
         sat open past the cookie's life, or the browser did not keep the cookie) the person gets the form back
         with an explanation, not a bare error page. Nothing they submitted is acted on."""
-        if not hmac.compare_digest(request.form.get("csrf", ""), session.get("csrf", "x")):
+        expected = session.get("csrf", "")
+        if not expected or not hmac.compare_digest(request.form.get("csrf", ""), expected):
             raise StaleForm()
 
     @app.errorhandler(StaleForm)
