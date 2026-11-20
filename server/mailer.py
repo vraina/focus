@@ -1,0 +1,63 @@
+"""Sends the parent email through Resend. Without RESEND_API_KEY the email is logged instead (local development)."""
+import html
+import logging
+import os
+
+import resend
+
+log = logging.getLogger(__name__)
+
+
+DECISION_LABEL = {"approve_temporary": "Approved for a while", "approve_permanent": "Approved for good", "deny": "Not approved"}
+DECISION_COLOR = {"approve_temporary": "#15803d", "approve_permanent": "#15803d", "deny": "#b91c1c"}
+
+
+def digest_email(day_label: str, requests: list[dict], new_sites: list[dict], link_for) -> tuple[str, str]:
+    """`link_for(host)` gives the page where the parent can overrule a site's label."""
+    e = html.escape
+    approved = sum(1 for r in requests if r["decision"] != "deny")
+    subject = f"YoungWonks Focus daily summary, {day_label}: {len(requests)} request(s), {approved} approved"
+    parts = [f'''<div style="font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;font-size:15px;color:#1a1a1a;max-width:620px">
+<h2 style="margin:0 0 4px">Daily summary, {e(day_label)}</h2>
+<p style="color:#666;margin:0 0 18px">Nothing is blocked. Requests are judged automatically; you can overrule any site below.</p>''']
+    if requests:
+        parts.append('<h3 style="margin:0 0 8px">"Needed for work" requests</h3>')
+    for r in requests:
+        granted = ""
+        if r["decision"] == "approve_temporary":
+            granted = f" for {r.get('grantedMinutes', 0)} min (asked for {r.get('requestedMinutes', 0)})"
+        elif r["decision"] == "deny":
+            asked = "for good" if r.get("wantsPermanent") else f"{r.get('requestedMinutes', 0)} min"
+            granted = f" (asked for {asked})"
+        parts.append(f'''<div style="border:1px solid #e5e7eb;border-radius:8px;padding:12px 14px;margin:0 0 10px">
+<div><b>{e(r["host"])}</b> <span style="color:#666">· {e(r.get("localTime", ""))} · {e(r.get("who", ""))}</span></div>
+<div style="margin:6px 0;padding:8px 10px;background:#f3f4f6;border-radius:6px">{e(r.get("reason", ""))}</div>
+<div><b style="color:{DECISION_COLOR[r["decision"]]}">{DECISION_LABEL[r["decision"]]}</b>{e(granted)}</div>
+<div style="color:#444;margin-top:4px">{e(r.get("explanation", ""))}</div>
+<div style="margin-top:8px"><a href="{e(link_for(r["host"]))}" style="color:#1d4ed8">Overrule this site</a></div>
+</div>''')
+    if new_sites:
+        parts.append('<h3 style="margin:18px 0 8px">Websites labelled for the first time today</h3><table style="border-collapse:collapse;width:100%">')
+        for s in new_sites:
+            good = s["state"] == "productive"
+            parts.append(f'''<tr><td style="padding:5px 8px 5px 0;vertical-align:top"><b>{e(s["_id"])}</b></td>
+<td style="padding:5px 8px;vertical-align:top;color:{"#15803d" if good else "#b45309"}">{"Productive" if good else "Distraction"}</td>
+<td style="padding:5px 0;vertical-align:top;color:#444">{e(s.get("reason", ""))} <a href="{e(link_for(s["_id"]))}" style="color:#1d4ed8">Change</a></td></tr>''')
+        parts.append("</table>")
+    parts.append("</div>")
+    return subject, "".join(parts)
+
+
+def send(to: str, subject: str, body_html: str) -> bool:
+    api_key = os.environ.get("RESEND_API_KEY")
+    sender = os.environ.get("MAIL_FROM", "YoungWonks Focus <onboarding@resend.dev>")
+    if not api_key:
+        log.warning("RESEND_API_KEY not set, email not sent. To: %s Subject: %s", to, subject)
+        return False
+    resend.api_key = api_key
+    try:
+        resend.Emails.send({"from": sender, "to": [to], "subject": subject, "html": body_html})
+        return True
+    except Exception as exc:  # the dispute itself is already stored; a failed email must not lose it
+        log.error("could not send email to %s: %s", to, exc)
+        return False

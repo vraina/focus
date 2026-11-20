@@ -1,0 +1,34 @@
+services:
+  - type: web
+    name: youngwonks-focus
+    runtime: python
+    rootDir: server
+    plan: starter
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn -w 2 --threads 8 --timeout 120 -b 0.0.0.0:$PORT wsgi:app
+    healthCheckPath: /healthz
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.13.2
+      - key: SECRET_KEY          # signs the links in the parent email
+        generateValue: true
+      - key: DEVICE_TOKEN        # paste the same value into Parent settings on the Mac
+        generateValue: true
+      - key: MONGODB_URI         # an Atlas user with readWrite on the database below
+        sync: false
+      - key: MONGODB_DB
+        value: focussprint
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: RESEND_API_KEY
+        sync: false
+      - key: MAIL_FROM           # e.g. YoungWonks Focus <focus@yourdomain.com>, on a domain verified in Resend
+        sync: false
+      - key: PARENT_EMAIL
+        sync: false
+      - key: PUBLIC_URL          # e.g. https://youngwonks-focus.onrender.com, used for the links in the email
+        sync: false
+      - key: TIMEZONE            # the family's time zone, decides when "end of day" is
+        value: America/Los_Angeles
+      - key: DIGEST_HOUR         # 24-hour clock: the daily summary goes out at 9 pm
+        value: "21"
