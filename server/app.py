@@ -161,57 +161,121 @@ def create_app(db=None, classify=classifier.classify, review=classifier.review_r
 
     # --- Which Mac is calling ---------------------------------------------------------------
 
-    def require_device():
-        """Every Mac has its own token, issued when the parent paired it. It decides the family."""
+    def require_device(need_member: bool = True):
+        """Works out which computer is calling, which Mac login on it, and who that login belongs to.
+
+        The computer is linked to a household once and has its own token. Each Mac login on it is then
+        assigned to one member. The helper (which runs as root) names the login from who owns the files
+        it is sending, so an app cannot claim to be someone else's login.
+        """
         sent = request.headers.get("Authorization", "")
         device = devices.find_one({"tokenHash": token_hash(sent[7:]), "revoked": {"$ne": True}}) if sent.startswith("Bearer ") else None
-        if device is None:
+        family = families.find_one({"_id": device["familyId"]}) if device else None
+        if family is None:
             abort(401)
-        family = families.find_one({"_id": device["familyId"]})
-        member = members.find_one({"_id": device.get("memberId"), "familyId": device["familyId"]})
-        if family is None or member is None:
-            abort(401)
-        g.fid, g.device, g.family, g.member = family["_id"], device, family, member
-        g.mid, g.scope = member["_id"], svc.scope(member)
+        login = " ".join(request.headers.get("X-Login", "").split())[:60]
+        if not login:
+            abort(400)
+        key = child_key(login)
+        entry = (device.get("logins") or {}).get(key)
+        if entry is None:
+            # A login the service has not heard of: note it, so an admin can assign it on the website.
+            entry = {"login": login, "memberId": None, "firstSeen": now()}
+            devices.update_one({"_id": device["_id"]}, {"$set": {f"logins.{key}": entry}})
+        member = members.find_one({"_id": entry.get("memberId"), "familyId": family["_id"]}) if entry.get("memberId") else None
+        g.fid, g.device, g.family, g.login, g.login_key, g.member = family["_id"], device, family, login, key, member
+        g.label = f"{device.get('name') or 'Mac'} · {login}"
         if device.get("lastSeenAt", "") < iso(datetime.now(timezone.utc) - timedelta(minutes=1)):
             devices.update_one({"_id": device["_id"]}, {"$set": {"lastSeenAt": now()}})
+        if member is None:
+            if need_member:
+                # Nothing from this login is accepted until someone says whose it is. The Mac keeps it queued.
+                abort(409)
+            return
+        g.mid, g.scope = member["_id"], svc.scope(member)
 
     def who() -> tuple[str, str, str]:
-        """The Mac login name, the computer, and a label for who a request comes from. The member and the
-        computer's name are the ones set when it was linked, not anything the Mac claims."""
-        body = request.get_json(silent=True) or {}
-        user = str(body.get("user") or "").strip()[:60]
-        device = g.device.get("name") or "Mac"
-        return user, device, f"{g.member.get('name', 'Member')} on {device}"
+        """The Mac login name, the computer, and a label for who a request comes from. All of it is what was
+        set when the computer was linked and the login assigned, not anything the Mac claims."""
+        return g.login, g.label, f"{g.member.get('name', 'Member')} on {g.label}"
 
     @app.get("/healthz")
     def healthz():
         return "ok"
 
+    def assign(device: dict, key: str, login: str, member_id: str | None, by: str):
+        devices.update_one({"_id": device["_id"]}, {"$set": {f"logins.{key}": {
+            "login": login, "memberId": member_id, "assignedAt": now(), "assignedBy": by,
+            "firstSeen": ((device.get("logins") or {}).get(key) or {}).get("firstSeen", now())}}})
+
+    svc.assign_login = assign
+
+    def use_code(raw) -> dict | None:
+        """Claims a pairing code. Each works once, for a few minutes."""
+        code = re.sub(r"[^A-Z0-9]", "", str(raw or "").upper())
+        if not code:
+            return None
+        return db["pairings"].find_one_and_update({"_id": code, "used": False, "expiresAt": {"$gt": now()}},
+                                                  {"$set": {"used": True, "usedAt": now()}})
+
     @app.post("/api/pair")
     def api_pair():
-        """Exchanges a pairing code from the parent's website for this Mac's own token."""
+        """Links a computer to a household with a code from the website, and assigns the login it was typed
+        in to the person the code was made for."""
         body = request.get_json(silent=True) or {}
         if accounts.too_many_attempts(db, "pair"):
             return jsonify(error="Too many attempts. Try again in a few minutes."), 429
-        code = re.sub(r"[^A-Z0-9]", "", str(body.get("code") or "").upper())
-        pairing = db["pairings"].find_one_and_update(
-            {"_id": code, "used": False, "expiresAt": {"$gt": now()}}, {"$set": {"used": True, "usedAt": now()}}) if code else None
+        pairing = use_code(body.get("code"))
         if pairing is None:
             accounts.note_attempt(db, "pair")
-            return jsonify(error="That code is not valid, or it has expired. Get a new one from the parent website."), 400
+            return jsonify(error="That code is not valid, or it has expired. Get a new one on the website."), 400
         member = members.find_one({"_id": pairing["memberId"], "familyId": pairing["familyId"]}) or abort(400)
         token = secrets.token_urlsafe(32)
         name = " ".join(str(body.get("name") or "").split())[:80] or "Mac"
-        devices.insert_one({"_id": uuid.uuid4().hex, "familyId": member["familyId"], "memberId": member["_id"], "name": name,
-                            "tokenHash": token_hash(token), "pairedAt": now(), "lastSeenAt": now(), "revoked": False})
+        login = " ".join(str(body.get("login") or "").split())[:60] or "user"
+        devices.insert_one({"_id": uuid.uuid4().hex, "familyId": member["familyId"], "name": name, "tokenHash": token_hash(token),
+                            "pairedAt": now(), "lastSeenAt": now(), "revoked": False,
+                            "logins": {child_key(login): {"login": login, "memberId": member["_id"], "firstSeen": now(),
+                                                          "assignedAt": now(), "assignedBy": "code"}}})
         return jsonify(token=token, account=accounts.link_label(db, member), device=name,
                        member={"name": member.get("name", ""), "kind": member.get("kind", "kid")})
 
+    @app.post("/api/claim")
+    def api_claim():
+        """Says whose a Mac login is, on a computer that is already linked. Two ways:
+        - a code from the website (the way an adult claims their own login), or
+        - a kid's profile picked in the app, as long as no other login on this computer has taken it.
+        A login that already belongs to someone can only be changed from the website."""
+        require_device(need_member=False)
+        if g.member is not None:
+            return jsonify(error="This login is already assigned. A household admin can change it on the website."), 409
+        body = request.get_json(silent=True) or {}
+        if body.get("code"):
+            if accounts.too_many_attempts(db, "pair"):
+                return jsonify(error="Too many attempts. Try again in a few minutes."), 429
+            pairing = use_code(body.get("code"))
+            member = members.find_one({"_id": pairing["memberId"], "familyId": g.fid}) if pairing else None
+            if member is None:  # no such code, or a code from a different household
+                accounts.note_attempt(db, "pair")
+                return jsonify(error="That code is not valid for this computer, or it has expired."), 400
+        else:
+            member = members.find_one({"_id": str(body.get("member") or ""), "familyId": g.fid, "kind": "kid"})
+            taken = {e.get("memberId") for e in (g.device.get("logins") or {}).values()}
+            if member is None or member["_id"] in taken:
+                return jsonify(error="That profile is not available on this computer."), 400
+        assign(g.device, g.login_key, g.login, member["_id"], "code" if body.get("code") else "picked")
+        return jsonify(member={"name": member.get("name", ""), "kind": member.get("kind", "kid")})
+
     @app.get("/api/config")
     def api_config():
-        """What the Mac needs to know: who it is linked to and the parent's settings."""
-        require_device()
+        """What the Mac needs to know for one login: who it belongs to and the settings that apply. For a
+        login nobody has been assigned to yet, the kid profiles it may pick from."""
+        require_device(need_member=False)
+        if g.member is None:
+            taken = {e.get("memberId") for e in (g.device.get("logins") or {}).values()}
+            return jsonify(device=g.device.get("name", ""), member=None,
+                           profiles=[{"id": m["_id"], "name": m.get("name", "")}
+                                     for m in members.find({"familyId": g.fid, "kind": "kid"}).sort("name", 1) if m["_id"] not in taken])
         return jsonify(account=accounts.link_label(db, g.member), device=g.device.get("name", ""),
                        member={"name": g.member.get("name", ""), "kind": g.member.get("kind", "kid")},
                        settings=svc.settings_for(g.family, g.member))
@@ -234,7 +298,7 @@ def create_app(db=None, classify=classifier.classify, review=classifier.review_r
             if name in ("start.json", "end.json"):
                 collection, doc["_id"] = db["sprintStarts" if name == "start.json" else "sprintEnds"], session_id
                 if name == "start.json":
-                    doc["device"] = g.device.get("name") or doc.get("device", "")
+                    doc["device"], doc["user"] = g.label, g.login
             else:
                 collection, doc["_id"], doc["sprintId"] = db["events"], f"{session_id}-{name[:-5]}", session_id
         else:

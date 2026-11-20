@@ -372,8 +372,11 @@ def register(app, svc):
                 if name:
                     members.update_one({"_id": request.form.get("member"), "familyId": fid, "kind": "kid"}, {"$set": {"name": name}})
         logins = {a["memberId"]: a for a in accounts.find({"familyId": fid})}
-        counts = {row["_id"]: row["n"] for row in devices.aggregate([{"$match": {"familyId": fid, "revoked": {"$ne": True}}},
-                                                                    {"$group": {"_id": "$memberId", "n": {"$sum": 1}}}])}
+        counts: dict = {}
+        for d in devices.find({"familyId": fid, "revoked": {"$ne": True}}):
+            for entry in (d.get("logins") or {}).values():
+                if entry.get("memberId"):
+                    counts[entry["memberId"]] = counts.get(entry["memberId"], 0) + 1
         role_text = {"admin": "Admin", "coadmin": "Co-admin", "adult": "Adult"}
         rows = [{"id": m["_id"], "name": m.get("name", ""), "kind": m.get("kind", "kid"), "computers": counts.get(m["_id"], 0),
                  "account": logins.get(m["_id"], {}).get("_id"), "email": logins.get(m["_id"], {}).get("email", ""),
@@ -385,11 +388,20 @@ def register(app, svc):
 
     # --- Computers: linking a Mac to a member -------------------------------------------------
 
+    def assignable() -> list[dict]:
+        """Who the signed-in person may assign a Mac login to: an admin to any kid or to themself; an adult
+        only to themself. Nobody can assign a login to another adult, since that adult's records are private."""
+        mine = request.account["memberId"]
+        return [{"id": m["_id"], "label": "Me" if m["_id"] == mine else m.get("name", "")} for m in request.visible]
+
     @app.get("/dashboard/computers")
     @signed_in
     def computers():
-        zone = svc.zone(request.family)
-        names = {m["_id"]: m for m in request.visible}
+        fid, zone = request.family["_id"], svc.zone(request.family)
+        mine, admin_view = request.account["memberId"], is_admin(request.account)
+        names = {m["_id"]: m for m in members.find({"familyId": fid})}
+        choices = assignable()
+        allowed = {c["id"] for c in choices}
         stale = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
         def when(moment_text: str) -> str:
@@ -398,26 +410,33 @@ def register(app, svc):
             moment = datetime.strptime(moment_text[:19], "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc).astimezone(zone)
             return moment.strftime("%-d %b, %-I:%M %p")
 
-        rows = [{"id": d["_id"], "name": d.get("name", "Mac"), "member": names[d["memberId"]].get("name", ""),
-                 "paired": when(d.get("pairedAt", "")), "seen": when(d.get("lastSeenAt", "")), "quiet": d.get("lastSeenAt", "") < stale}
-                for d in devices.find({"memberId": {"$in": list(names)}, "revoked": {"$ne": True}}).sort("pairedAt", -1)]
+        rows = []
+        for d in devices.find({"familyId": fid, "revoked": {"$ne": True}}).sort("pairedAt", -1):
+            logins = []
+            for key, entry in sorted((d.get("logins") or {}).items()):
+                member = names.get(entry.get("memberId"))
+                private = bool(member) and member["_id"] not in allowed  # another adult's login
+                logins.append({"key": key, "login": entry.get("login", key), "member": entry.get("memberId") or "",
+                               "name": "an adult (private)" if private else ("Me" if member and member["_id"] == mine else (member or {}).get("name", "")),
+                               "private": private, "waiting": member is None})
+            # An adult member only sees a computer they use; admins see every computer in the household.
+            if admin_view or any(l["member"] == mine for l in logins):
+                rows.append({"id": d["_id"], "name": d.get("name", "Mac"), "logins": logins if admin_view else [l for l in logins if l["member"] == mine],
+                             "paired": when(d.get("pairedAt", "")), "seen": when(d.get("lastSeenAt", "")), "quiet": d.get("lastSeenAt", "") < stale})
         code = db["pairings"].find_one({"createdBy": request.account["_id"], "used": False, "expiresAt": {"$gt": utcnow()}},
                                        sort=[("expiresAt", -1)])
-        mine = request.account["memberId"]
-        return render_template("computers.html", computers=rows, minutes=PAIRING_MINUTES,
+        return render_template("computers.html", computers=rows, minutes=PAIRING_MINUTES, choices=choices, admin_view=admin_view,
                                code=f"{code['_id'][:4]}-{code['_id'][4:]}" if code else None,
-                               code_for=names.get(code["memberId"], {}).get("name", "") if code else "",
-                               choices=[{"id": m["_id"], "label": "Me" if m["_id"] == mine else m.get("name", "")} for m in request.visible],
+                               code_for=next((c["label"] for c in choices if code and c["id"] == code["memberId"]), ""),
                                download_url=os.environ.get("DOWNLOAD_URL", ""))
 
     @app.post("/dashboard/computers/code")
     @signed_in
     def new_pairing_code():
         check_csrf()
-        allowed = {m["_id"] for m in request.visible}
         member_id = request.form.get("member") or request.account["memberId"]
-        if member_id not in allowed:
-            abort(403)  # nobody can link a computer to someone they are not responsible for
+        if member_id not in {c["id"] for c in assignable()}:
+            abort(403)  # nobody can link a computer or a login to someone they are not responsible for
         db["pairings"].delete_many({"createdBy": request.account["_id"], "used": False})  # one live code at a time
         code = "".join(secrets.choice(PAIRING_ALPHABET) for _ in range(8))
         expires = (datetime.now(timezone.utc) + timedelta(minutes=PAIRING_MINUTES)).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -425,13 +444,31 @@ def register(app, svc):
                                    "used": False, "expiresAt": expires, "createdAt": utcnow()})
         return redirect(url_for("computers"))
 
+    @app.post("/dashboard/computers/<device_id>/assign")
+    @signed_in
+    def assign_login(device_id):
+        """Says whose a Mac login is, from the website. This is how a parent sets up a child's login
+        without ever being let into it."""
+        check_csrf()
+        device = devices.find_one({"_id": device_id, "familyId": request.family["_id"], "revoked": {"$ne": True}}) or abort(404)
+        key = request.form.get("login", "")
+        entry = (device.get("logins") or {}).get(key) or abort(404)
+        allowed = {c["id"] for c in assignable()}
+        target = request.form.get("member") or None
+        # Only an admin reassigns, and never a login that belongs to another adult, nor to another adult.
+        if not is_admin(request.account) or (entry.get("memberId") and entry["memberId"] not in allowed) or (target and target not in allowed):
+            abort(403)
+        svc.assign_login(device, key, entry.get("login", key), target, request.account["_id"])
+        return redirect(url_for("computers"))
+
     @app.post("/dashboard/computers/<device_id>/remove")
     @signed_in
     def remove_computer(device_id):
         check_csrf()
+        if not is_admin(request.account):
+            abort(403)
         # Its token stops working at once. What it already uploaded stays.
-        devices.update_one({"_id": device_id, "memberId": {"$in": [m["_id"] for m in request.visible]}},
-                           {"$set": {"revoked": True, "revokedAt": utcnow()}})
+        devices.update_one({"_id": device_id, "familyId": request.family["_id"]}, {"$set": {"revoked": True, "revokedAt": utcnow()}})
         return redirect(url_for("computers"))
 
     # --- Settings ------------------------------------------------------------------------------

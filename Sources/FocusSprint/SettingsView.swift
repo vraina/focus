@@ -45,7 +45,7 @@ struct SettingsView: View {
             VStack(alignment: .leading, spacing: 16) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Account").font(Theme.title(30))
-                    Text("Reports and settings are on the website. This Mac only needs to be linked once, to the person who uses it.")
+                    Text("Reports and settings are on the website. A computer is linked to a household once; each Mac login on it then belongs to one person.")
                         .font(.system(size: 14)).foregroundStyle(.secondary)
                 }
                 if !helperRunning {
@@ -77,8 +77,8 @@ struct SettingsView: View {
                     .font(.system(size: 18, weight: .bold)).foregroundStyle(.white)
                     .frame(width: 44, height: 44).background(Theme.gradient, in: Circle())
                 VStack(alignment: .leading, spacing: 1) {
-                    Text("Link this Mac").font(Theme.title(18))
-                    Text("On the website, open Computers, pick who uses this Mac, and choose \"Get a code\".")
+                    Text("Link this computer").font(Theme.title(18))
+                    Text("On the website, open Computers, pick whose login this is, and choose \"Get a code\".")
                         .font(.system(size: 13)).foregroundStyle(.secondary)
                 }
             }
@@ -98,7 +98,7 @@ struct SettingsView: View {
                     .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
             }
             Button(action: link) {
-                Label(waitingFor == nil ? "Link this Mac" : "Linking…", systemImage: "link")
+                Label(waitingFor == nil ? "Link this computer" : "Linking…", systemImage: "link")
             }
             .buttonStyle(PrimaryButtonStyle())
             .disabled(waitingFor != nil || code.filter { $0.isLetter || $0.isNumber }.count < 8)
@@ -118,7 +118,7 @@ struct SettingsView: View {
                     .frame(width: 44, height: 44)
                     .background(status?.linkProblem == nil ? Theme.good : Theme.warn, in: Circle())
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(status?.memberName.map { $0.isEmpty ? "Linked" : "Linked as \($0)'s computer" } ?? "Linked").font(Theme.title(18))
+                    Text(status?.memberName.map { $0.isEmpty ? "Linked" : "This login is \($0)" } ?? "Linked").font(Theme.title(18))
                     Text([status?.deviceName.map { "\"\($0)\"" }, status?.account.map { "household account \($0)" }].compactMap { $0 }.joined(separator: " · "))
                         .font(.system(size: 13)).foregroundStyle(.secondary)
                 }
@@ -139,12 +139,12 @@ struct SettingsView: View {
                 }
                 .controlSize(.large)
                 Spacer()
-                Button("Unlink this Mac…", action: unlink)
+                Button("Unlink this computer…", action: unlink)
                     .buttonStyle(.plain).font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.bad)
             }
             Text(status?.isAdult == true
-                 ? "Your records are private: only you can see them, on your own sign-in. Unlinking needs the Mac administrator password."
-                 : "A household admin can see what this Mac records. Unlinking needs the Mac administrator password.")
+                 ? "Your records are private: only you can see them, on your own sign-in. Unlinking the computer needs the Mac administrator password and affects every login on it."
+                 : "A household admin can see what this login records, and can change whose login it is on the website. Unlinking the computer needs the Mac administrator password.")
                 .font(.system(size: 12)).foregroundStyle(.secondary)
         }
         .card()
@@ -184,7 +184,7 @@ struct SettingsView: View {
     private func unlink() {
         do {
             try AdminWriter.unlink()
-            message = "Unlinked. This Mac keeps recording, and sends everything once it is linked again."
+            message = "Unlinked. This computer keeps recording, and sends everything once it is linked again."
             messageIsError = false
         } catch {
             message = error.localizedDescription

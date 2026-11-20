@@ -62,6 +62,11 @@ enum Snapshots {
                     MediaViewer.shared.open(items, at: items.dropFirst().first?.id ?? "")
                 }
             }, view: { app(.history) }),
+            Shot(name: "15-who-are-you", size: CGSize(width: 1040, height: 760), view: {
+                var status = HelperStatus(linked: true, deviceName: "Den iMac", pending: 3)
+                status.profiles = [.init(id: "1", name: "Aarav"), .init(id: "2", name: "Mia"), .init(id: "3", name: "Leo")]
+                return AnyView(WhoAreYouView(status: status))
+            }),
             Shot(name: "AppIcon", size: CGSize(width: 1024, height: 1024), view: { AnyView(AppIconArt()) }),
         ]
         Task { @MainActor in

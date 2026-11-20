@@ -106,7 +106,7 @@ public extension Paths {
     static var outbox: URL { vault.appendingPathComponent("outbox", isDirectory: true) }
     static var sites: URL { vault.appendingPathComponent("sites.json") }
     static var answers: URL { vault.appendingPathComponent("answers.json") }
-    /// Root-only: this Mac's token for the family service. Its presence is what "linked" means.
+    /// Root-only: this computer's token for the service. Its presence is what "linked" means.
     static var service: URL { root.appendingPathComponent("service.json") }
     /// The answer to the latest pairing attempt, for the app to show.
     static var pairing: URL { vault.appendingPathComponent("pairing.json") }
@@ -143,12 +143,14 @@ public struct PairingResult: Codable, Sendable {
 }
 
 public enum ServiceError: Error {
-    /// The service does not accept this Mac's token (the parent removed the computer, or the link is broken).
+    /// The service does not accept this computer's token (it was removed on the website, or the link is broken).
     case notLinked
+    /// The computer is linked, but nobody has said whose this Mac login is yet. Its records wait.
+    case unassigned
 }
 
 public struct SiteRequest: Codable, Sendable {
-    public var kind: String // "classify", "dispute", "search" or "pair"
+    public var kind: String // "classify", "dispute", "search", "pair", "claim" or "hello"
     public var host: String
     public var reason: String?
     public var user: String?
@@ -160,8 +162,10 @@ public struct SiteRequest: Codable, Sendable {
     /// Searches only: the search words, and the sprint task they were made during (if any).
     public var query: String?
     public var task: String?
-    /// Pairing only: the one-time code from the parent's website.
+    /// Pairing only: the one-time code from the website.
     public var code: String?
+    /// Picking a profile only: the kid profile chosen for this login.
+    public var member: String?
 
     public init(kind: String, host: String, reason: String? = nil, user: String? = nil, device: String? = nil,
                 id: String? = nil, minutes: Int? = nil, permanent: Bool? = nil, onParentList: Bool? = nil,
@@ -171,7 +175,19 @@ public struct SiteRequest: Codable, Sendable {
         self.query = query; self.task = task; self.code = code
     }
 
-    /// A request to link this Mac. `host` is only a placeholder that satisfies the file-name rules.
+    /// A kid picking their own profile for this login.
+    public static func claim(member: String, id: String) -> SiteRequest {
+        var request = SiteRequest(kind: "claim", host: "claim.youngwonks.app", id: id)
+        request.member = member
+        return request
+    }
+
+    /// The app announcing that this login is in use, so the helper sets up its area and status.
+    public static func hello() -> SiteRequest {
+        SiteRequest(kind: "hello", host: "hello.youngwonks.app", id: UUID().uuidString.lowercased())
+    }
+
+    /// A request to link this login. `host` is only a placeholder that satisfies the file-name rules.
     public static func pairing(code: String, deviceName: String, id: String) -> SiteRequest {
         SiteRequest(kind: "pair", host: "pair.youngwonks.app", device: deviceName, id: id, code: code)
     }
@@ -206,8 +222,6 @@ public final class SiteSync {
     public func ensureDirectories() {
         try? fm.createDirectory(at: Paths.requests, withIntermediateDirectories: true)
         chmod(Paths.requests.path, 0o1777)
-        try? fm.createDirectory(at: Paths.outbox, withIntermediateDirectories: true)
-        chmod(Paths.outbox.path, 0o755)
     }
 
     public static func config() -> ServiceConfig? {
@@ -217,67 +231,76 @@ public final class SiteSync {
         return cfg
     }
 
-    /// Returns how many new requests were accepted.
+    /// Moves new requests into the outbox of the login that owns each file. Returns how many, per login.
     @discardableResult
-    public func ingest() -> Int {
-        var accepted = 0
+    public func ingest() -> [uid_t: Int] {
+        var accepted: [uid_t: Int] = [:]
         for name in (try? fm.contentsOfDirectory(atPath: Paths.requests.path)) ?? [] {
             let src = Paths.requests.appendingPathComponent(name)
             if name.hasPrefix(".tmp-") { continue }
             defer { unlink(src.path) }
-            guard name.range(of: #"^(classify|dispute|search|pair)-[a-z0-9.-]{1,260}\.json$"#, options: .regularExpression) != nil else { continue }
-            let fd = open(src.path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK)
-            guard fd >= 0 else { continue }
-            let handle = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
-            var st = stat()
-            guard fstat(fd, &st) == 0, (st.st_mode & S_IFMT) == S_IFREG, st.st_size > 0, st.st_size < 8192,
-                  let data = try? handle.readToEnd(), let req = try? JSONDecoder().decode(SiteRequest.self, from: data),
-                  SiteRequest.isValidHost(req.host), ["classify", "dispute", "search", "pair"].contains(req.kind) else { continue }
-            let dest = Paths.outbox.appendingPathComponent(name)
+            guard name.range(of: #"^(classify|dispute|search|pair|claim|hello)-[a-z0-9.-]{1,260}\.json$"#, options: .regularExpression) != nil,
+                  let (data, owner) = Vault.readRegularFile(src, limit: 8192),
+                  let req = try? JSONDecoder().decode(SiteRequest.self, from: data),
+                  SiteRequest.isValidHost(req.host), ["classify", "dispute", "search", "pair", "claim", "hello"].contains(req.kind) else { continue }
+            Paths.prepareHome(for: owner)
+            accepted[owner, default: 0] += 0
+            if req.kind == "hello" { continue } // nothing to send: the area and its status now exist
+            let dest = Paths.home(for: owner).appendingPathComponent("vault/outbox/\(name)")
             if !fm.fileExists(atPath: dest.path), (try? data.write(to: dest, options: .atomic)) != nil {
                 chmod(dest.path, 0o600)
-                accepted += 1
+                accepted[owner, default: 0] += 1
             }
         }
         return accepted
     }
 
     public var pendingCount: Int {
-        ((try? fm.contentsOfDirectory(atPath: Paths.outbox.path)) ?? []).filter { !$0.hasPrefix("pair-") }.count
+        ((try? fm.contentsOfDirectory(atPath: Paths.outbox.path)) ?? []).filter { !$0.hasPrefix("pair-") && !$0.hasPrefix("claim-") }.count
     }
 
     // MARK: Linking this Mac to a parent's account
 
-    /// Handles a waiting pairing request, if there is one. On success this Mac's own token is saved
-    /// where only root can read it, and from then on the Mac counts as linked.
+    /// Handles a waiting request to link, if there is one, for the login being worked on:
+    /// - a code typed on a computer that is not linked yet links the computer to that household;
+    /// - a code typed in a login on a linked computer says that login is the code's person (how an adult claims theirs);
+    /// - a kid picking their profile in the app says the same for a kid.
+    /// A login that already belongs to someone is never changed from the Mac: only the website can do that.
     public func pairIfRequested() async {
-        let waiting = ((try? fm.contentsOfDirectory(atPath: Paths.outbox.path)) ?? []).filter { $0.hasPrefix("pair-") }.sorted()
+        let waiting = ((try? fm.contentsOfDirectory(atPath: Paths.outbox.path)) ?? [])
+            .filter { $0.hasPrefix("pair-") || $0.hasPrefix("claim-") }.sorted()
         guard let name = waiting.last else { return }
         for other in waiting { if other != name { unlink(Paths.outbox.appendingPathComponent(other).path) } }
         let file = Paths.outbox.appendingPathComponent(name)
         defer { unlink(file.path) }
         guard let data = try? Data(contentsOf: file), let req = try? JSONDecoder().decode(SiteRequest.self, from: data) else { return }
         let id = req.id ?? name
-        // Linking again while linked would let anyone at the keyboard move this Mac to another account.
-        // Unlinking takes the administrator password; only then can a new code be used.
-        if SiteSync.config() != nil {
-            report(PairingResult(id: id, ok: false, message: "This Mac is already linked. Unlink it first (administrator password needed)."))
-            return
-        }
-        let base = ServiceConfig.baseURL
         do {
-            let open = ServiceConfig(serviceURL: base, deviceToken: "")
-            let (reply, status) = try await call(open, path: "/api/pair", json: ["code": req.code ?? "", "name": req.device ?? "Mac"])
+            let reply: Data, status: Int
+            if let linked = SiteSync.config() {
+                let body: [String: Any] = req.kind == "claim" ? ["member": req.member ?? ""] : ["code": req.code ?? ""]
+                (reply, status) = try await call(linked, path: "/api/claim", json: body)
+            } else if req.kind == "pair" {
+                // The login name comes from the system, not from the request, so it cannot be made up.
+                let open = ServiceConfig(serviceURL: ServiceConfig.baseURL, deviceToken: "")
+                (reply, status) = try await call(open, path: "/api/pair", json: [
+                    "code": req.code ?? "", "name": req.device ?? "Mac", "login": Paths.loginName(Paths.uid)])
+            } else {
+                report(PairingResult(id: id, ok: false, message: "This computer is not linked to a household yet."))
+                return
+            }
             let object = (try? JSONSerialization.jsonObject(with: reply)) as? [String: Any]
-            if status == 200, let token = object?["token"] as? String, !token.isEmpty {
-                let saved = try JSONEncoder().encode(ServiceConfig(serviceURL: base, deviceToken: token))
+            guard status == 200 else {
+                report(PairingResult(id: id, ok: false, message: (object?["error"] as? String) ?? "That was not accepted."))
+                return
+            }
+            if let token = object?["token"] as? String, !token.isEmpty {
+                let saved = try JSONEncoder().encode(ServiceConfig(serviceURL: ServiceConfig.baseURL, deviceToken: token))
                 try saved.write(to: Paths.service, options: .atomic)
                 chmod(Paths.service.path, 0o600)
-                let member = (object?["member"] as? [String: Any])?["name"] as? String
-                report(PairingResult(id: id, ok: true, message: "Linked\(member.map { " as \($0)'s computer" } ?? "")."))
-            } else {
-                report(PairingResult(id: id, ok: false, message: (object?["error"] as? String) ?? "The code was not accepted."))
             }
+            let member = (object?["member"] as? [String: Any])?["name"] as? String
+            report(PairingResult(id: id, ok: true, message: "This login is now \(member ?? "linked")."))
         } catch {
             report(PairingResult(id: id, ok: false, message: "Could not reach the service. Check the internet connection and try again."))
         }
@@ -300,19 +323,30 @@ public final class SiteSync {
         request.httpMethod = "POST"
         request.timeoutInterval = 120
         request.setValue("Bearer \(config.deviceToken)", forHTTPHeaderField: "Authorization")
+        request.setValue(Paths.loginName(Paths.uid), forHTTPHeaderField: "X-Login")
         request.setValue(item.file.hasSuffix(".json") ? "application/json" : "application/octet-stream", forHTTPHeaderField: "Content-Type")
         let (_, response) = try await session.upload(for: request, from: payload)
         switch (response as? HTTPURLResponse)?.statusCode ?? 0 {
         case 200: return true
         case 401: throw ServiceError.notLinked
+        case 409: throw ServiceError.unassigned
         case 400, 409, 413: return true // the service will never accept this file: do not block the queue behind it
         default: return false
         }
     }
 
-    /// Fetches the settings that apply to this Mac's member and writes them where the app reads them.
-    /// Returns who this Mac is linked to.
-    public func fetchSettings(_ config: ServiceConfig) async throws -> (account: String, device: String, member: String, kind: String) {
+    public struct Identity: Sendable {
+        public var account: String
+        public var device: String
+        /// Empty when nobody has been assigned to this login yet.
+        public var member: String
+        public var kind: String
+        public var profiles: [HelperStatus.Profile]
+    }
+
+    /// Asks the service who this login belongs to. For an assigned login it also writes the settings that
+    /// apply where the app reads them; for an unassigned one it returns the kid profiles that may be picked.
+    public func fetchSettings(_ config: ServiceConfig) async throws -> Identity {
         let (data, status) = try await call(config, path: "/api/config", json: nil)
         if status == 401 { throw ServiceError.notLinked }
         guard status == 200, let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
@@ -325,13 +359,18 @@ public final class SiteSync {
             chmod(Paths.config.path, 0o644)
         }
         let member = object["member"] as? [String: Any]
-        return ((object["account"] as? String) ?? "", (object["device"] as? String) ?? "",
-                (member?["name"] as? String) ?? "", (member?["kind"] as? String) ?? "kid")
+        let profiles = ((object["profiles"] as? [[String: Any]]) ?? []).compactMap { entry -> HelperStatus.Profile? in
+            guard let id = entry["id"] as? String, let name = entry["name"] as? String else { return nil }
+            return HelperStatus.Profile(id: id, name: name)
+        }
+        return Identity(account: (object["account"] as? String) ?? "", device: (object["device"] as? String) ?? "",
+                        member: (member?["name"] as? String) ?? "", kind: (member?["kind"] as? String) ?? "", profiles: profiles)
     }
 
     /// Sends everything waiting. Stops at the first network failure and leaves the rest queued.
     public func drain(_ config: ServiceConfig) async -> String? {
-        for name in ((try? fm.contentsOfDirectory(atPath: Paths.outbox.path)) ?? []).sorted() where !name.hasPrefix("pair-") {
+        for name in ((try? fm.contentsOfDirectory(atPath: Paths.outbox.path)) ?? []).sorted()
+        where !name.hasPrefix("pair-") && !name.hasPrefix("claim-") {
             let file = Paths.outbox.appendingPathComponent(name)
             guard let data = try? Data(contentsOf: file), let req = try? JSONDecoder().decode(SiteRequest.self, from: data) else {
                 unlink(file.path)
@@ -387,6 +426,7 @@ public final class SiteSync {
         if status == 429 { return req.kind == "search" ? .rejected : .retryLater }
         if status == 503 { return .retryLater }
         if status == 401 { throw ServiceError.notLinked }
+        if status == 409 { throw ServiceError.unassigned }
         throw URLError(.badServerResponse)
     }
 
@@ -394,6 +434,7 @@ public final class SiteSync {
     public func refresh(_ config: ServiceConfig) async throws {
         let (data, status) = try await call(config, path: "/api/sites", json: nil)
         if status == 401 { throw ServiceError.notLinked }
+        if status == 409 { throw ServiceError.unassigned }
         guard status == 200 else { throw URLError(.badServerResponse) }
         let list = try JSONDecoder().decode(SiteList.self, from: data)
         write(SiteBook(entries: list.sites))
@@ -406,6 +447,8 @@ public final class SiteSync {
         var request = URLRequest(url: url)
         if !config.deviceToken.isEmpty {
             request.setValue("Bearer \(config.deviceToken)", forHTTPHeaderField: "Authorization")
+            // Which Mac login this is about. The helper takes it from the system, not from the app.
+            request.setValue(Paths.loginName(Paths.uid), forHTTPHeaderField: "X-Login")
         }
         if let json {
             request.httpMethod = "POST"

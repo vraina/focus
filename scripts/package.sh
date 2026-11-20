@@ -50,9 +50,11 @@ PLIST
 cat > "$SCRIPTS/postinstall" <<'POST'
 #!/bin/bash
 ROOT="/Library/Application Support/FocusSprint"
-mkdir -p "$ROOT/inbox" "$ROOT/requests" "$ROOT/vault/sprints" "$ROOT/vault/pending" "$ROOT/vault/outbox"
-chown -R root:wheel "$ROOT" "/Applications/YoungWonks Focus.app" /Library/PrivilegedHelperTools/com.focussprint.vaultd
-chmod 755 "$ROOT" "$ROOT/vault" "$ROOT/vault/sprints" "$ROOT/vault/pending" "$ROOT/vault/outbox"
+# Only the two drop folders are made here. The helper creates each Mac login's own area, closed to other logins.
+mkdir -p "$ROOT/inbox" "$ROOT/requests" "$ROOT/users"
+chown root:wheel "$ROOT" "$ROOT/inbox" "$ROOT/requests" "$ROOT/users"
+chown -R root:wheel "/Applications/YoungWonks Focus.app" /Library/PrivilegedHelperTools/com.focussprint.vaultd
+chmod 755 "$ROOT" "$ROOT/users"
 chmod 1777 "$ROOT/inbox" "$ROOT/requests"
 chmod 755 /Library/PrivilegedHelperTools/com.focussprint.vaultd
 chmod 644 /Library/LaunchDaemons/com.focussprint.vaultd.plist /Library/LaunchAgents/com.focussprint.app.plist

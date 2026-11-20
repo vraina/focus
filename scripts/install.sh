@@ -16,11 +16,12 @@ sudo rm -rf "/Applications/YoungWonks Focus.app" /Applications/FocusSprint.app
 sudo cp -R "build/YoungWonks Focus.app" "/Applications/YoungWonks Focus.app"
 sudo chown -R root:wheel "/Applications/YoungWonks Focus.app"
 
-sudo mkdir -p /Library/PrivilegedHelperTools "$ROOT/inbox" "$ROOT/vault/sprints" "$ROOT/vault/pending"
+# Only the two drop folders are made here. The helper creates each Mac login's own area, closed to other logins.
+sudo mkdir -p /Library/PrivilegedHelperTools "$ROOT/inbox" "$ROOT/requests" "$ROOT/users"
 sudo install -m 755 -o root -g wheel build/focussprint-vaultd "$HELPER"
-sudo chown -R root:wheel "$ROOT"
-sudo chmod 755 "$ROOT" "$ROOT/vault" "$ROOT/vault/sprints" "$ROOT/vault/pending"
-sudo chmod 1777 "$ROOT/inbox"
+sudo chown root:wheel "$ROOT" "$ROOT/inbox" "$ROOT/requests" "$ROOT/users"
+sudo chmod 755 "$ROOT" "$ROOT/users"
+sudo chmod 1777 "$ROOT/inbox" "$ROOT/requests"
 
 sudo tee "$PLIST" >/dev/null <<PLISTEOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -62,6 +63,7 @@ sudo launchctl bootstrap system "$PLIST"
 
 echo
 echo "Done. Next:"
-echo "  1. Make sure the teen's Mac login is a Standard account (System Settings > Users & Groups)."
-echo "  2. Log in as the teen, open YoungWonks Focus, and grant Screen Recording when asked."
-echo "  3. In Parent settings, paste the Atlas connection string and save."
+echo "  1. On the website, open Computers and get a code. Open the app in any login here and type it under Account."
+echo "  2. Each other Mac login on this computer: assign it on the website, or let a kid pick their profile in the app."
+echo "  3. Make sure each kid's Mac login is a Standard account (System Settings > Users & Groups)."
+echo "  4. In each login, grant Screen Recording when the app asks."

@@ -134,7 +134,7 @@ final class CoreTests: XCTestCase {
     func testVaultIngestIsAppendOnlyAndStrict() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("fs-test-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }
-        let vault = Vault(root: root)
+        let vault = Vault(root: root, uid: getuid()) // files dropped by this test belong to this login
         try vault.ensureDirectories()
         func put(_ name: String, _ text: String) { try! Data(text.utf8).write(to: vault.inbox.appendingPathComponent(name)) }
 
@@ -146,18 +146,21 @@ final class CoreTests: XCTestCase {
         put(".tmp-half-written", "x")
         try FileManager.default.createSymbolicLink(at: vault.inbox.appendingPathComponent("abc__link.json"),
                                                    withDestinationURL: URL(fileURLWithPath: "/etc/hosts"))
-        XCTAssertEqual(vault.ingestInbox(), 2)
+        // Each accepted file is filed under the login that owns it, here the one running the test.
+        XCTAssertEqual(Vault.ingest(root: root), [getuid(): 2])
 
-        let stored = vault.sprints.appendingPathComponent("20260101-100000-abc123/start.json")
+        let stored = root.appendingPathComponent("users/\(getuid())/vault/sprints/20260101-100000-abc123/start.json")
         XCTAssertEqual(try String(contentsOf: stored), "first")
         XCTAssertEqual(vault.pendingItems().map(\.file).sorted(), ["e1-start.jpg", "start.json"])
         XCTAssertFalse(FileManager.default.fileExists(atPath: vault.sprints.appendingPathComponent("abc").path))
         // Only the fresh temp file is left alone; rejected files are removed from the inbox.
         XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: vault.inbox.path), [".tmp-half-written"])
+        // Another login's vault holds nothing of this.
+        XCTAssertTrue(Vault(root: root, uid: getuid() + 1).pendingItems().isEmpty)
 
         // A second write with the same name must not replace the stored record.
         put("20260101-100000-abc123__start.json", "tampered")
-        XCTAssertEqual(vault.ingestInbox(), 0)
+        XCTAssertEqual(Vault.ingest(root: root), [:])
         XCTAssertEqual(try String(contentsOf: stored), "first")
 
         vault.markUploaded(vault.pendingItems()[0])

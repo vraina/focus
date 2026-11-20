@@ -4,6 +4,23 @@ import FocusSprintCore
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var meter: MeterPanelController?
+    private var presence: Timer?
+
+    /// Tells the helper this login is in use (so it sets up the login's area), and while nobody has said
+    /// whose login this is, keeps the "Who are you?" screen in front. The Mac itself is never locked.
+    private func checkIn() {
+        let status = HelperStatus.load()
+        if status?.isFresh != true { try? SiteRequest.hello().drop() }
+        guard status?.needsProfile == true, let window = NSApp.windows.first(where: { $0.title == "YoungWonks Focus" }) else {
+            NSApp.windows.first(where: { $0.title == "YoungWonks Focus" })?.level = .normal
+            return
+        }
+        window.level = .floating
+        if !window.isVisible || !NSApp.isActive {
+            NSApp.activate(ignoringOtherApps: true)
+            window.makeKeyAndOrderFront(nil)
+        }
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         #if DEBUG
@@ -17,6 +34,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.regular)
         meter = MeterPanelController(engine: SprintEngine.shared)
         Timing.mark("engine and widget ready")
+        checkIn()
+        let timer = Timer(timeInterval: 15, repeats: true) { [weak self] _ in self?.checkIn() }
+        RunLoop.main.add(timer, forMode: .common)
+        presence = timer
         NSApp.activate(ignoringOtherApps: true)
         #if DEBUG
         // Development only: FOCUSSPRINT_AUTOSTART=<minutes> starts a sprint without touching the UI.
@@ -92,6 +113,8 @@ enum Pane: String, CaseIterable, Identifiable {
 
 struct ContentView: View {
     @EnvironmentObject var engine: SprintEngine
+    @State private var status = HelperStatus.load()
+    private let statusTimer = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
     @State var pane: Pane = Pane(rawValue: ProcessInfo.processInfo.environment["FOCUSSPRINT_PANE"] ?? "") ?? .focus
 
     var body: some View {
@@ -109,6 +132,9 @@ struct ContentView: View {
         }
         .background(Theme.canvas)
         .overlay { MediaViewerOverlay(viewer: MediaViewer.shared) }
+        // The computer is linked but this login has no person yet: nothing else in the app until that is settled.
+        .overlay { if let status, status.isFresh, status.needsProfile { WhoAreYouView(status: status) } }
+        .onReceive(statusTimer) { _ in status = HelperStatus.load() }
         .onAppear { Timing.mark("main window appeared") }
     }
 

@@ -95,16 +95,22 @@ class World:
     def me(self, email):
         return self.db["accounts"].find_one({"email": email})["memberId"]
 
-    def pair(self, client, member, name="Kid's Mac", expect=200):
-        """Links a Mac to a member with a pairing code; returns the headers that Mac then uses."""
+    def pair(self, client, member, name="Kid's Mac", expect=200, login="kid"):
+        """Links a Mac to the household with a pairing code typed in one Mac login, which becomes that
+        member's; returns the headers the helper then sends for that login."""
         made = client.post("/dashboard/computers/code", data={"csrf": self.csrf(client, "/dashboard/computers"), "member": member})
         if expect != 200:
             assert made.status_code == expect
             return None
         code = re.search(r'class="code">([A-Z0-9-]+)<', client.get("/dashboard/computers").get_data(as_text=True)).group(1)
-        reply = self.browser().post("/api/pair", json={"code": code, "name": name})
+        reply = self.browser().post("/api/pair", json={"code": code, "name": name, "login": login})
         assert reply.status_code == 200, reply.get_data(as_text=True)
-        return {"Authorization": "Bearer " + reply.json["token"]}
+        return {"Authorization": "Bearer " + reply.json["token"], "X-Login": login}
+
+    @staticmethod
+    def other_login(mac, login):
+        """The same computer, a different Mac login."""
+        return {**mac, "X-Login": login}
 
 
 @pytest.fixture
@@ -236,7 +242,7 @@ def test_an_adults_records_are_private_even_from_admins(w):
         for path in ("/dashboard", f"/dashboard/day/{today()}", f"/dashboard/day/{today()}?who=me", "/dashboard/sites",
                      "/dashboard/sites?list=mine", "/dashboard/computers", f"/dashboard/day/{today()}?who={w.me('grandpa@example.com')}"):
             page = viewer.get(path).get_data(as_text=True)
-            assert all(x not in page for x in ("grandpasite", "youtube.com", "NBA scores", "Physics lecture", "Grandpa&#39;s iMac")), path
+            assert all(x not in page for x in ("grandpasite", "youtube.com", "NBA scores", "Physics lecture")), path
         assert "kidsite.example.com" in viewer.get(f"/dashboard/day/{today()}").get_data(as_text=True)
         assert viewer.get(f"/dashboard/media/{old_sid}/e1-start.jpg").status_code == 404
         assert viewer.get(f"/dashboard/media/{kid_sid}/e1-start.jpg").status_code == 200
@@ -291,6 +297,72 @@ def test_co_admin_rights(w):
     assert w.browser().post("/signup", data={"csrf": "", "invite": code}).status_code == 400
 
 
+# --- One Mac, several logins ------------------------------------------------------------------------
+
+def test_each_mac_login_is_assigned_to_a_person(w):
+    admin = w.household("mum@example.com", name="Mum")
+    mia, leo = w.add_kid(admin, "Mia"), w.add_kid(admin, "Leo")
+    client = w.browser()
+    # Mum links the family iMac from her own login. That login is hers, and private.
+    mum_login = w.pair(admin, w.me("mum@example.com"), "Den iMac", login="mum")
+    mia_login, leo_login, dad_login = (w.other_login(mum_login, x) for x in ("mia", "leo", "dad"))
+
+    # Mia's login has not been assigned: nothing from it is accepted, and the Mac is told to hold on to it.
+    sid = session_id(tail="mia111")
+    assert client.post(f"/api/upload/{sid}/start.json", headers=mia_login, json={"startedAt": stamp()}).status_code == 409
+    assert client.post("/api/search", headers=mia_login, json={"query": "NBA scores"}).status_code == 409
+    waiting = client.get("/api/config", headers=mia_login).json
+    assert waiting["member"] is None and [p["name"] for p in waiting["profiles"]] == ["Leo", "Mia"]  # kids only: no adults to hide behind
+    # It shows up for Mum on the website the first time it is used, as not assigned.
+    page = admin.get("/dashboard/computers").get_data(as_text=True)
+    assert "<b>mia</b>" in page and "Not assigned" in page
+
+    # Mum assigns it from the website: Mia never has to let her into the login.
+    device = w.db["devices"].find_one({"name": "Den iMac"})["_id"]
+    assign = lambda who, login, member: who.post(f"/dashboard/computers/{device}/assign", data={
+        "csrf": w.csrf(who, "/dashboard/computers"), "login": login, "member": member})
+    assert assign(admin, "mia", mia).status_code == 302
+    assert client.get("/api/config", headers=mia_login).json["member"] == {"name": "Mia", "kind": "kid"}
+    upload_sprint(client, mia_login, sid, site="miasite.example.com")
+    assert "Mia on Den iMac · mia" in admin.get(f"/dashboard/day/{today()}").get_data(as_text=True)
+
+    # Leo picks his own profile in the app. Mia's is taken on this computer, and an adult's cannot be picked.
+    assert [p["name"] for p in client.get("/api/config", headers=leo_login).json["profiles"]] == ["Leo"]
+    assert client.post("/api/claim", headers=leo_login, json={"member": mia}).status_code == 400
+    assert client.post("/api/claim", headers=leo_login, json={"member": w.me("mum@example.com")}).status_code == 400
+    assert client.post("/api/claim", headers=leo_login, json={"member": leo}).json["member"]["name"] == "Leo"
+    assert client.post("/api/claim", headers=leo_login, json={"member": leo}).status_code == 409  # only the website changes it after that
+    assert assign(admin, "leo", mia).status_code == 302  # Mum can correct a wrong pick
+    assert client.get("/api/config", headers=leo_login).json["member"]["name"] == "Mia"
+    assign(admin, "leo", leo)
+
+    # Dad is an adult member: he claims his own login with his own code, and it stays private from Mum.
+    dad = w.join(w.invite_adult(admin, "Dad"), "dad@example.com", name="Dad")
+    dad.post("/dashboard/computers/code", data={"csrf": w.csrf(dad, "/dashboard/computers")})
+    code = re.search(r'class="code">([A-Z0-9-]+)<', dad.get("/dashboard/computers").get_data(as_text=True)).group(1)
+    assert client.post("/api/claim", headers=dad_login, json={"code": code}).json["member"] == {"name": "Dad", "kind": "adult"}
+    upload_sprint(client, dad_login, session_id(tail="dad222"), site="dadsite.example.com")
+    for path in (f"/dashboard/day/{today()}", f"/dashboard/day/{today()}?who=me", "/dashboard"):
+        assert "dadsite" not in admin.get(path).get_data(as_text=True)
+    assert "dadsite.example.com" in dad.get(f"/dashboard/day/{today()}").get_data(as_text=True)
+    page = admin.get("/dashboard/computers").get_data(as_text=True)
+    assert "Belongs to an adult (private)" in page
+    # Mum cannot take over Dad's login, nor hand a login to Dad; Dad cannot assign anything.
+    assert assign(admin, "dad", mia).status_code == 403 and assign(admin, "leo", w.me("dad@example.com")).status_code == 403
+    assert assign(dad, "leo", "").status_code == 403
+    assert w.db["devices"].find_one({"_id": device})["logins"]["dad"]["memberId"] == w.me("dad@example.com")
+    # Dad sees the computer he uses, with only his own login listed.
+    his = dad.get("/dashboard/computers").get_data(as_text=True)
+    assert "Den iMac" in his and "<b>dad</b>" in his and "<b>mia</b>" not in his
+
+    # A code from another household does not work on this computer.
+    stranger = w.household("other@example.com")
+    stranger.post("/dashboard/computers/code", data={"csrf": w.csrf(stranger, "/dashboard/computers")})
+    other_code = re.search(r'class="code">([A-Z0-9-]+)<', stranger.get("/dashboard/computers").get_data(as_text=True)).group(1)
+    assert client.post("/api/claim", headers=w.other_login(mum_login, "guest"), json={"code": other_code}).status_code == 400
+    assert client.post("/api/config", headers={"Authorization": mum_login["Authorization"]}).status_code in (400, 405)
+
+
 # --- Linking a Mac --------------------------------------------------------------------------------
 
 def test_pairing_code_links_a_mac_once(w):
@@ -302,13 +374,13 @@ def test_pairing_code_links_a_mac_once(w):
     assert "Code for <b>Mia</b>" in page
     mac = w.browser()
     assert mac.post("/api/pair", json={"code": "ZZZZ-ZZZZ"}).status_code == 400
-    reply = mac.post("/api/pair", json={"code": code.lower().replace("-", " "), "name": "Mia's  MacBook"})
+    reply = mac.post("/api/pair", json={"code": code.lower().replace("-", " "), "name": "Mia's  MacBook", "login": "mia"})
     assert reply.status_code == 200 and reply.json["device"] == "Mia's MacBook" and reply.json["member"]["kind"] == "kid"
     assert reply.json["account"].startswith("m") and "mum@" not in reply.json["account"]  # the Mac only learns a masked address
     assert mac.post("/api/pair", json={"code": code}).status_code == 400  # a code works once
     token = reply.json["token"]
     assert token not in str(list(w.db["devices"].find({})))  # only a hash of the token is kept
-    headers = {"Authorization": "Bearer " + token}
+    headers = {"Authorization": "Bearer " + token, "X-Login": "mia"}
     config = mac.get("/api/config", headers=headers)
     assert config.status_code == 200 and config.json["device"] == "Mia's MacBook" and config.json["settings"]["captureMode"] == "screenshot"
     assert "Mia&#39;s MacBook" in admin.get("/dashboard/computers").get_data(as_text=True)
@@ -330,7 +402,7 @@ def test_expired_code_and_guessing_are_refused(w):
     assert mac.post("/api/pair", json={"code": "AAAA-AAAA"}).status_code == 429
     for path in ("/api/config", "/api/sites"):
         assert mac.get(path).status_code == 401
-        assert mac.get(path, headers={"Authorization": "Bearer made-up"}).status_code == 401
+        assert mac.get(path, headers={"Authorization": "Bearer made-up", "X-Login": "mia"}).status_code == 401
 
 
 # --- A Mac's records ------------------------------------------------------------------------------
@@ -351,7 +423,7 @@ def test_upload_and_dashboard(w):
 
     page = admin.get(f"/dashboard/day/{today()}").get_data(as_text=True)
     assert "espn.com" in page and "10:00:10 AM" in page and "2m 00s" in page and "92% focused" in page
-    assert "Mia on Den iMac" in page  # who and which computer come from the link, not from what the Mac claims
+    assert "Mia on Den iMac · kid" in page  # who, which computer and which login come from the link, not from what the Mac claims
     assert "<script>alert(1)</script>" not in page and "&lt;script&gt;" in page
     picture = admin.get(f"/dashboard/media/{sid}/e1-start.jpg")
     assert picture.status_code == 200 and picture.data.startswith(b"\xff\xd8") and "private" in picture.headers["Cache-Control"]
@@ -522,10 +594,10 @@ def test_filter_by_kid_and_computer(w):
     client.post("/api/search", json={"query": "NBA scores"}, headers=pro)
     day = f"/dashboard/day/{today()}"
     everyone = admin.get(day).get_data(as_text=True)  # the default for an admin with several kids is all of them
-    assert all(x in everyone for x in ("tiktok.com", "espn.com", "roblox.com", "NBA scores", "Mia on Den iMac", "8m 00s", "All kids"))
+    assert all(x in everyone for x in ("tiktok.com", "espn.com", "roblox.com", "NBA scores", "Mia on Den iMac · kid", "8m 00s", "All kids"))
     only_mia = admin.get(day + f"?who={mia}").get_data(as_text=True)
     assert "tiktok.com" in only_mia and "espn.com" in only_mia and "roblox.com" not in only_mia and "NBA scores" not in only_mia and "3m 00s" in only_mia
-    den_only = admin.get(day + f"?who={mia}&device=Den%20iMac").get_data(as_text=True)
+    den_only = admin.get(day + f"?who={mia}&device=Den%20iMac%20%C2%B7%20kid").get_data(as_text=True)
     assert "espn.com" in den_only and "tiktok.com" not in den_only
     only_leo = admin.get(f"/dashboard?who={leo}").get_data(as_text=True)
     assert "20%" in only_leo and "1 distraction search" in only_leo and f"who={leo}" in only_leo  # 300s away of 1500s

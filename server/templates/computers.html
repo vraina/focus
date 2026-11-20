@@ -3,24 +3,24 @@
 {% block title %}Computers · YoungWonks Focus{% endblock %}
 {% block body %}
 <h1>Computers</h1>
-<p class="muted">Each Mac is linked once, with a code, to the person who uses it. No password is ever typed on the computer itself.</p>
+<p class="muted">A Mac is linked to your household once, with a code. After that each Mac login on it is assigned to a person, here or in the app. No password is ever typed on the computer itself.</p>
 
 <h2>Link a computer</h2>
 <div class="card">
   <ol style="margin:0 0 14px;padding-left:20px">
     <li>On the Mac, signed in as an administrator, install YoungWonks Focus.
       {% if download_url %}<a href="{{ download_url }}">Download the installer</a>.{% else %}<span class="muted">(The installer download is not published yet.)</span>{% endif %}</li>
-    <li>Open the app and choose <b>Account</b>.</li>
-    <li>Type in the code below. It works once, for {{ minutes }} minutes.</li>
+    <li>Open the app in any login (yours is fine) and choose <b>Account</b>.</li>
+    <li>Type in the code below. It works once, for {{ minutes }} minutes. That login becomes the chosen person's; assign the Mac's other logins further down this page.</li>
   </ol>
   {% if code %}
-    <p class="muted small" style="margin:0 0 6px">Code for <b>{{ code_for }}</b>'s computer</p>
+    <p class="muted small" style="margin:0 0 6px">Code for <b>{{ code_for }}</b>'s login</p>
     <div class="code">{{ code }}</div>
     <p class="muted small" style="margin:10px 0 0">This page does not refresh by itself: reload it after entering the code to see the computer listed.</p>
   {% endif %}
   <form method="post" action="{{ url_for('new_pairing_code') }}" style="margin-top:14px">
     <input type="hidden" name="csrf" value="{{ csrf_token() }}">
-    {% if choices|length > 1 %}<label for="member">Whose computer is it?</label>
+    {% if choices|length > 1 %}<label for="member">Whose login will the code be typed in?</label>
     <select class="field" id="member" name="member" style="max-width:260px;display:block">{% for c in choices %}<option value="{{ c.id }}">{{ c.label }}</option>{% endfor %}</select>
     {% else %}<input type="hidden" name="member" value="{{ choices[0].id }}">{% endif %}
     <button class="{{ 'ghost' if code else 'btn' }}">{{ 'Get a different code' if code else 'Get a code' }}</button>
@@ -30,17 +30,41 @@
 <h2>Linked computers</h2>
 <div class="stack">
 {% for c in computers %}
-  <div class="card row">
-    <div style="flex:1;min-width:200px"><div style="font-weight:700">{{ c.name }}</div>
-      <div class="muted small">{{ c.member }} · linked {{ c.paired }} · last heard from {{ c.seen }}</div></div>
-    {% if c.quiet %}<span class="pill warn">Quiet for over a day</span>{% else %}<span class="pill good">Active</span>{% endif %}
-    <form method="post" action="{{ url_for('remove_computer', device_id=c.id) }}"
-          onsubmit="return confirm('Remove this computer? It stops sending anything until it is linked again. What it already sent is kept.')">
-      <input type="hidden" name="csrf" value="{{ csrf_token() }}"><button class="ghost">Remove</button></form>
+  <div class="card">
+    <div class="row">
+      <div style="flex:1;min-width:200px"><div style="font-weight:700">{{ c.name }}</div>
+        <div class="muted small">Linked {{ c.paired }} · last heard from {{ c.seen }}</div></div>
+      {% if c.quiet %}<span class="pill warn">Quiet for over a day</span>{% else %}<span class="pill good">Active</span>{% endif %}
+      {% if admin_view %}
+      <form method="post" action="{{ url_for('remove_computer', device_id=c.id) }}"
+            onsubmit="return confirm('Remove this computer? It stops sending anything until it is linked again. What it already sent is kept.')">
+        <input type="hidden" name="csrf" value="{{ csrf_token() }}"><button class="ghost">Remove</button></form>
+      {% endif %}
+    </div>
+    {% for l in c.logins %}
+    <div class="row" style="margin-top:10px;padding-top:10px;border-top:1px solid var(--line)">
+      <div style="flex:1;min-width:160px"><span class="muted small">Mac login</span> <b>{{ l.login }}</b></div>
+      {% if l.private %}
+        <span class="pill">Belongs to an adult (private)</span>
+      {% elif admin_view %}
+        {% if l.waiting %}<span class="pill warn">Not assigned: its records are waiting on the Mac</span>{% endif %}
+        <form method="post" action="{{ url_for('assign_login', device_id=c.id) }}" class="row" style="gap:6px">
+          <input type="hidden" name="csrf" value="{{ csrf_token() }}"><input type="hidden" name="login" value="{{ l.key }}">
+          <select class="field" name="member" style="width:auto;margin:0">
+            <option value="">Nobody yet</option>
+            {% for ch in choices %}<option value="{{ ch.id }}" {{ 'selected' if ch.id == l.member }}>{{ ch.label }}</option>{% endfor %}
+          </select>
+          <button class="ghost">Save</button>
+        </form>
+      {% else %}
+        <span class="pill good">{{ l.name }}</span>
+      {% endif %}
+    </div>
+    {% endfor %}
   </div>
 {% else %}
   <div class="card muted">No computers linked yet.</div>
 {% endfor %}
 </div>
-<p class="muted small" style="margin-top:14px">A linked Mac that goes quiet while it is in use may mean the app was removed or the Mac was not restarted properly. On the Mac, the link can only be removed with the administrator password.</p>
+<p class="muted small" style="margin-top:14px">Each Mac login on a computer belongs to one person. A new login shows up here the first time it is used; choose whose it is, or let a kid pick their own profile in the app. An adult assigns their own login with a code, and what they record stays private.</p>
 {% endblock %}

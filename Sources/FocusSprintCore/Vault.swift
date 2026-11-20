@@ -19,24 +19,28 @@ public struct PendingItem: Sendable {
     public var source: URL
 }
 
-/// Helper side. Runs as root: copies inbox files into the vault (root-owned, so a Standard
+/// Helper side. Runs as root: copies inbox files into the right login's vault (root-owned, so a Standard
 /// account cannot delete or alter them) and keeps a marker per file until it is uploaded.
 public final class Vault {
     public static let maxFileBytes = 12 * 1024 * 1024
     public let root: URL
+    public let uid: uid_t
     public var inbox: URL { root.appendingPathComponent("inbox", isDirectory: true) }
-    public var vault: URL { root.appendingPathComponent("vault", isDirectory: true) }
+    public var vault: URL { root.appendingPathComponent("users/\(uid)/vault", isDirectory: true) }
     public var sprints: URL { vault.appendingPathComponent("sprints", isDirectory: true) }
     public var pending: URL { vault.appendingPathComponent("pending", isDirectory: true) }
     private let fm = FileManager.default
 
-    public init(root: URL = Paths.root) { self.root = root }
+    public init(root: URL = Paths.root, uid: uid_t = Paths.uid) {
+        self.root = root
+        self.uid = uid
+    }
 
     public func ensureDirectories() throws {
-        for (url, mode) in [(root, 0o755), (inbox, 0o1777), (vault, 0o755), (sprints, 0o755), (pending, 0o755)] {
-            try fm.createDirectory(at: url, withIntermediateDirectories: true)
-            chmod(url.path, mode_t(mode))
-        }
+        try fm.createDirectory(at: inbox, withIntermediateDirectories: true)
+        chmod(root.path, 0o755)
+        chmod(inbox.path, 0o1777)
+        for url in [sprints, pending] { try fm.createDirectory(at: url, withIntermediateDirectories: true) }
     }
 
     /// `<sprintId>__<file>` with a conservative character set: no slashes, no leading dots.
@@ -50,11 +54,14 @@ public final class Vault {
         return (String(name[..<r.lowerBound]), String(name[r.upperBound...]))
     }
 
-    /// Moves everything waiting in the inbox into the vault. Returns how many files were accepted.
+    /// Moves everything waiting in the inbox into the vault of the login that owns each file.
+    /// Returns how many files were accepted, per login.
     @discardableResult
-    public func ingestInbox() -> Int {
-        guard let names = try? fm.contentsOfDirectory(atPath: inbox.path) else { return 0 }
-        var accepted = 0
+    public static func ingest(root: URL = Paths.root, prepare: (uid_t) -> Void = { _ in }) -> [uid_t: Int] {
+        let fm = FileManager.default
+        let inbox = root.appendingPathComponent("inbox", isDirectory: true)
+        guard let names = try? fm.contentsOfDirectory(atPath: inbox.path) else { return [:] }
+        var accepted: [uid_t: Int] = [:]
         for name in names {
             let src = inbox.appendingPathComponent(name)
             if name.hasPrefix(".tmp-") {
@@ -63,21 +70,24 @@ public final class Vault {
                    Date().timeIntervalSince(date) > 3600 { unlink(src.path) }
                 continue
             }
-            guard Vault.isValid(name: name), let parts = Vault.split(name), let data = readRegularFile(src) else {
+            guard Vault.isValid(name: name), let parts = Vault.split(name), let (data, owner) = readRegularFile(src) else {
                 unlink(src.path)
                 continue
             }
-            let dir = sprints.appendingPathComponent(parts.sprintId, isDirectory: true)
+            prepare(owner)
+            let vault = Vault(root: root, uid: owner)
+            let dir = vault.sprints.appendingPathComponent(parts.sprintId, isDirectory: true)
             let dest = dir.appendingPathComponent(parts.file)
             // Append-only: a record that already exists is never replaced.
             if !fm.fileExists(atPath: dest.path) {
                 do {
                     try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+                    try fm.createDirectory(at: vault.pending, withIntermediateDirectories: true)
                     chmod(dir.path, 0o755)
                     try data.write(to: dest, options: .atomic)
                     chmod(dest.path, 0o644)
-                    fm.createFile(atPath: pending.appendingPathComponent(name).path, contents: nil)
-                    accepted += 1
+                    fm.createFile(atPath: vault.pending.appendingPathComponent(name).path, contents: nil)
+                    accepted[owner, default: 0] += 1
                 } catch {
                     continue // disk problem: leave the file in the inbox and retry on the next pass
                 }
@@ -88,13 +98,15 @@ public final class Vault {
     }
 
     /// Reads without following symlinks, so the inbox cannot be used to make root read another file.
-    private func readRegularFile(_ url: URL) -> Data? {
+    /// Also reports who owns the file: that is how the helper knows which login it came from.
+    static func readRegularFile(_ url: URL, limit: Int = Vault.maxFileBytes) -> (Data, uid_t)? {
         let fd = open(url.path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK)
         guard fd >= 0 else { return nil }
         let handle = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
         var st = stat()
-        guard fstat(fd, &st) == 0, (st.st_mode & S_IFMT) == S_IFREG, st.st_size > 0, st.st_size <= Vault.maxFileBytes else { return nil }
-        return try? handle.readToEnd()
+        guard fstat(fd, &st) == 0, (st.st_mode & S_IFMT) == S_IFREG, st.st_size > 0, st.st_size <= limit,
+              let data = try? handle.readToEnd() else { return nil }
+        return (data, st.st_uid)
     }
 
     public func pendingItems() -> [PendingItem] {

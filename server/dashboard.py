@@ -64,7 +64,9 @@ def register(app, svc, keep_days: int = 14):
         picked = next((o for o in options if o["key"] == request.args.get("who", "")), options[0] if options else None)
         if picked is None:
             abort(404)
-        names = sorted({d.get("name", "Mac") for d in db["devices"].find({"memberId": {"$in": picked["ids"]}})})
+        # A "computer" here is one Mac login on one Mac, e.g. "Den iMac · mia".
+        names = sorted({f"{d.get('name', 'Mac')} · {e.get('login', '')}" for d in db["devices"].find({"familyId": request.family["_id"]})
+                        for e in (d.get("logins") or {}).values() if e.get("memberId") in picked["ids"]})
         device = request.args.get("device", "")
         return {**picked, "device": device if device in names else "", "devices": names if len(names) > 1 else [],
                 "args": {k: v for k, v in (("who", picked["key"]), ("device", device if device in names else "")) if v}}

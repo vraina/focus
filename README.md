@@ -29,15 +29,25 @@ A household has an **admin**, optional **co-admins**, and **members** who are ki
 - No household can see anything of another household. The service owner can see that a household exists and how
   many people and computers it has, never what it records.
 
-### Linking a computer
+### Linking a computer, and whose login is whose
 
 1. Install the app on the Mac from an administrator account (`scripts/install.sh`, or the installer package).
-2. On the website, open **Computers**, pick who uses the Mac, and choose **Get a code**.
-3. In the app, open **Account** and type the code. It works once, for 15 minutes.
+2. On the website, open **Computers** and choose **Get a code**. In the app, in any login (the installing adult's is
+   fine), open **Account** and type the code. It works once, for 15 minutes. The computer is now linked to the household.
+3. Every Mac login on that computer then belongs to one person:
+   - **From the website:** each login appears under the computer the first time it is used; an admin picks whose it is.
+     A parent never needs to be let into a child's login.
+   - **In the app:** an unassigned login opens on a "Who are you?" screen that stays in front and covers the app until
+     a kid profile is picked. Only kid profiles not already taken on that computer are offered.
+   - **Adults** are never in that list. An adult gets a code for themself on the website and types it in their own
+     login; an admin can also assign a login to themself.
 
-The Mac gets its own token, stored where only root can read it. No password is typed on the Mac. Linking again, or
-unlinking, needs the Mac administrator password, so a Standard login cannot move the Mac to another account. Removing
-a computer on the website stops it at once. One computer belongs to one member, whichever Mac login is in use.
+Until a login has a person, what it records waits on the Mac and is sent once it does. An admin can change a kid's
+login on the website at any time, but cannot take over or hand out another adult's login.
+
+The computer's token is stored where only root can read it; no password is typed on the Mac. Which login a record
+came from is taken from who owns the file, not from what the app says. Each login's records on disk are readable by
+that login only. Unlinking the computer needs the Mac administrator password; removing it on the website stops it at once.
 
 ### Setup (service owner, once)
 
