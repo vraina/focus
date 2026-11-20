@@ -108,6 +108,7 @@ struct ContentView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .background(Theme.canvas)
+        .overlay { MediaViewerOverlay(viewer: MediaViewer.shared) }
         .onAppear { Timing.mark("main window appeared") }
     }
 

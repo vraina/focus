@@ -189,6 +189,17 @@ struct SprintDetail: View {
         return mine ? (away.label, away.since) : nil
     }
 
+    /// Every picture and clip on this page, in the order shown, for the viewer's previous / next.
+    private var gallery: [ViewerItem] {
+        record.events.reversed().flatMap { event in
+            event.media.map { ref in
+                ViewerItem(event: event, ref: ref,
+                           directory: record.directory.deletingLastPathComponent().appendingPathComponent(event.sprintId),
+                           source: source)
+            }
+        }
+    }
+
     /// Searches made during this sprint, or on this day for the all-day record.
     private var ownSearches: [SearchEntry] {
         let from = record.isAmbient ? Calendar.current.startOfDay(for: record.start.startedAt) : record.start.startedAt
@@ -287,7 +298,8 @@ struct SprintDetail: View {
                         // A combined day spans several stored sessions, so each event's files are looked up by its own session.
                         EventCard(event: event,
                                   directory: record.directory.deletingLastPathComponent().appendingPathComponent(event.sprintId),
-                                  source: source, cleared: event.host.map(sites.isCleared) == true)
+                                  source: source, cleared: event.host.map(sites.isCleared) == true,
+                                  onOpen: { ref in MediaViewer.shared.open(gallery, at: event.id + "/" + ref.file) })
                     }
                 }
             }
@@ -406,6 +418,7 @@ struct EventCard: View {
     var directory: URL
     var source: HistorySource
     var cleared = false
+    var onOpen: (MediaRef) -> Void = { _ in }
 
     var body: some View {
         let tint = event.category == .distraction ? Theme.bad : Theme.warn
@@ -443,7 +456,8 @@ struct EventCard: View {
                     ForEach(event.media, id: \.self) { ref in
                         VStack(alignment: .leading, spacing: 5) {
                             SectionLabel(text: ref.role == .start ? "First seconds" : "Last seconds")
-                            MediaView(ref: ref, sprintId: event.sprintId, directory: directory, source: source)
+                            MediaView(ref: ref, sprintId: event.sprintId, directory: directory, source: source,
+                                      onOpen: { onOpen(ref) })
                         }
                     }
                 }
@@ -491,6 +505,7 @@ struct MediaView: View {
     var sprintId: String
     var directory: URL
     var source: HistorySource
+    var onOpen: () -> Void = {}
     @State private var ready = false
     @State private var failed = false
     @State private var preview: NSImage?
@@ -500,11 +515,22 @@ struct MediaView: View {
     var body: some View {
         Group {
             if ready, ref.kind == .video {
-                VideoPlayer(player: AVPlayer(url: url))
+                // A still tile with a play mark: the clip itself plays in the viewer.
+                RoundedRectangle(cornerRadius: 10).fill(Color.black.opacity(0.85))
+                    .overlay(Image(systemName: "play.circle.fill").font(.system(size: 44)).foregroundStyle(.white.opacity(0.9)))
+                    .contentShape(Rectangle())
+                    .onTapGesture(perform: onOpen)
+                    .help("Click to play larger")
             } else if let preview {
                 Image(nsImage: preview).resizable().aspectRatio(contentMode: .fit)
-                    .onTapGesture { NSWorkspace.shared.open(url) }
-                    .help("Click to open full size")
+                    .overlay(alignment: .topTrailing) {
+                        Image(systemName: "arrow.up.left.and.arrow.down.right")
+                            .font(.system(size: 10, weight: .bold)).foregroundStyle(.white)
+                            .padding(6).background(.black.opacity(0.55), in: Circle()).padding(7)
+                    }
+                    .contentShape(Rectangle())
+                    .onTapGesture(perform: onOpen)
+                    .help("Click to view larger")
             } else {
                 RoundedRectangle(cornerRadius: 10).fill(Color.primary.opacity(0.06))
                     .overlay(Text(failed ? "Not available yet" : "Loading…").font(.system(size: 12)).foregroundStyle(.secondary))

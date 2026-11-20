@@ -52,6 +52,16 @@ enum Snapshots {
             Shot(name: "12-history-dark", size: CGSize(width: 1040, height: 900), dark: true, view: { app(.history) }),
             Shot(name: "13-widget-away-dark", size: CGSize(width: 304, height: 300), dark: true,
                  prepare: { engine.debugPreview("away") }, view: { padded(MeterView(engine: engine)) }),
+            Shot(name: "14-viewer", size: CGSize(width: 1040, height: 760), prepare: {
+                engine.debugPreview("idle")
+                let folder = Paths.vault.appendingPathComponent("sprints")
+                if let record = SprintReader.list(in: folder).first(where: { $0.events.contains { !$0.media.isEmpty } }) {
+                    let items = record.events.reversed().flatMap { event in
+                        event.media.map { ViewerItem(event: event, ref: $0, directory: record.directory, source: .local) }
+                    }
+                    MediaViewer.shared.open(items, at: items.dropFirst().first?.id ?? "")
+                }
+            }, view: { app(.history) }),
             Shot(name: "AppIcon", size: CGSize(width: 1024, height: 1024), view: { AnyView(AppIconArt()) }),
         ]
         Task { @MainActor in
