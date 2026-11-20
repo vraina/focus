@@ -51,17 +51,61 @@ a.card{transition:border-color .12s,transform .12s} a.card:hover{border-color:co
 .field:focus{outline:0;border-color:var(--brand);box-shadow:0 0 0 3px var(--ring)}
 textarea.field{min-height:120px;font-family:ui-monospace,Menlo,monospace;font-size:13px}
 label{font-size:13px;color:var(--soft);font-weight:600}
-.pick{appearance:none;-webkit-appearance:none;border:1px solid transparent;border-radius:999px;padding:6px 28px 6px 12px;font:inherit;font-size:13px;font-weight:650;cursor:pointer;
-  background-repeat:no-repeat;background-position:right 10px center;background-size:9px;transition:filter .12s}
-.pick:hover{filter:brightness(.96)} .pick:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
-.pick.distraction{color:#c8323a;background-color:rgba(230,71,77,.12);border-color:rgba(230,71,77,.28);background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23c8323a' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")}
-.pick.work{color:#17895a;background-color:rgba(33,173,112,.13);border-color:rgba(33,173,112,.30);background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%2317895a' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")}
-.pick.neutral{color:#5a55e0;background-color:rgba(94,87,240,.11);border-color:rgba(94,87,240,.26);background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%235a55e0' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")}
 .narrow{max-width:400px;margin:7vh auto 0} .ok{color:var(--good);font-weight:600} .err{color:var(--bad);font-weight:600}
 .code{font:700 34px/1 ui-monospace,Menlo,monospace;letter-spacing:4px;padding:16px 20px;border-radius:12px;background:var(--sunk);display:inline-block}
 .chip{display:inline-block;padding:6px 13px;border-radius:99px;background:var(--surface);border:1px solid var(--line);color:var(--ink);font-weight:600;font-size:13px;transition:background .12s}
 .chip:hover{background:var(--sunk)} .chip.sub{font-weight:500;color:var(--soft)} .chip.on,.chip.on:hover{background:var(--brand);border-color:var(--brand);color:#fff}
-@media (max-width:640px){main{padding:20px 14px 56px} h1{font-size:24px} header.bar .in{padding:8px 14px}}
+/* Dropdowns: every <select> is dressed as a button that opens a small panel (the real <select> stays for the form). */
+select.field,select.pick{max-width:100%}
+.dd{position:relative;display:inline-block;max-width:100%;vertical-align:middle}
+.dd.block{display:block;margin:4px 0 12px}
+.dd>select{position:absolute;inset:0;width:100%;height:100%;opacity:0;pointer-events:none;margin:0}
+.dd-btn{display:inline-flex;align-items:center;gap:8px;width:100%;max-width:100%;border:1px solid var(--line);background:var(--surface);color:var(--ink);font:inherit;font-size:14px;font-weight:600;
+  padding:8px 12px;border-radius:10px;cursor:pointer;text-align:left;transition:background .12s,border-color .12s,box-shadow .12s}
+.dd-btn:hover{background:var(--sunk)} .dd.open .dd-btn,.dd-btn:focus-visible{outline:0;border-color:var(--brand);box-shadow:0 0 0 3px var(--ring)}
+.dd-btn .t{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dd-btn .c{flex:none;width:10px;height:6px;opacity:.6;transition:transform .15s} .dd.open .dd-btn .c{transform:rotate(180deg)}
+.dd-btn .dot,.dd-opt .dot{flex:none;width:8px;height:8px;border-radius:50%;background:currentColor}
+.dd.round .dd-btn{border-radius:999px;padding:6px 12px;font-size:13px;font-weight:650}
+.dd.tone-distraction .dd-btn{color:var(--bad);background:color-mix(in srgb,var(--bad) 11%,transparent);border-color:color-mix(in srgb,var(--bad) 28%,transparent)}
+.dd.tone-work .dd-btn{color:var(--good);background:color-mix(in srgb,var(--good) 12%,transparent);border-color:color-mix(in srgb,var(--good) 30%,transparent)}
+.dd.tone-neutral .dd-btn{color:var(--brand);background:color-mix(in srgb,var(--brand) 10%,transparent);border-color:color-mix(in srgb,var(--brand) 26%,transparent)}
+.dd-menu{position:absolute;z-index:30;top:calc(100% + 6px);left:0;min-width:100%;width:max-content;max-width:min(320px,86vw);max-height:300px;overflow:auto;padding:6px;margin:0;list-style:none;
+  background:var(--surface);border:1px solid var(--line);border-radius:12px;box-shadow:0 12px 32px -8px rgba(18,20,28,.28);display:none}
+.dd.open .dd-menu{display:block} .dd.right .dd-menu{left:auto;right:0} .dd.up .dd-menu{top:auto;bottom:calc(100% + 6px)}
+.dd-opt{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:8px;cursor:pointer;font-size:14px;font-weight:600;color:var(--ink)}
+.dd-opt small{display:block;font-size:12px;font-weight:500;color:var(--soft);margin-top:1px}
+.dd-opt .k{flex:none;margin-left:auto;width:12px;height:12px;visibility:hidden;color:var(--brand)} .dd-opt[aria-selected=true] .k{visibility:visible}
+.dd-opt:hover,.dd-opt.at{background:var(--sunk)}
+.dd-opt.distraction .dot{color:var(--bad)} .dd-opt.work .dot{color:var(--good)} .dd-opt.neutral .dot{color:var(--brand)}
+/* Navigation folds into a menu button when there is no room for it. */
+.burger{display:none;margin-left:auto;width:38px;height:38px;border-radius:10px;border:1px solid var(--line);background:var(--surface);color:var(--ink);cursor:pointer;align-items:center;justify-content:center;padding:0}
+.burger:hover{background:var(--sunk)} .burger svg{width:18px;height:18px}
+.burger .x{display:none} header.bar.open .burger .x{display:block} header.bar.open .burger .m{display:none}
+.navwrap{display:flex;align-items:center;flex:1;min-width:0;gap:8px}
+@media (max-width:900px){
+  .burger{display:inline-flex}
+  .navwrap{display:none;position:absolute;left:0;right:0;top:100%;flex-direction:column;align-items:stretch;gap:2px;padding:10px 14px 14px;
+    background:var(--surface);border-bottom:1px solid var(--line);box-shadow:0 18px 30px -18px rgba(18,20,28,.35)}
+  header.bar.open .navwrap{display:flex}
+  header.bar nav{flex-direction:column;gap:2px;margin:0} nav a{padding:11px 12px;font-size:15px}
+  .navwrap form{border-top:1px solid var(--line);margin-top:6px;padding-top:6px} .linkbtn{width:100%;text-align:left;padding:11px 12px;font-size:15px}
+}
+/* Tablets and phones. */
+@media (max-width:760px){
+  main{padding:20px 14px 56px} h1{font-size:24px} header.bar .in{padding:8px 14px}
+  .card{padding:14px;border-radius:14px}
+  .tiles{grid-template-columns:1fr 1fr;gap:10px} .tile .v{font-size:23px}
+  .code{font-size:26px;letter-spacing:3px;padding:14px 16px}
+  .spread{margin-left:0}
+  .row>form.row,.row>.dd{flex:1 1 100%}
+  .row>form.row .dd,.row>form.row .field{flex:1;min-width:0}
+  .btn,.ghost{padding-top:10px;padding-bottom:10px} /* comfortable to tap */
+  .dd-btn{padding-top:10px;padding-bottom:10px} .dd.round .dd-btn{padding-top:8px;padding-bottom:8px}
+  .field{font-size:16px} /* stops iOS zooming the page when a field is tapped */
+}
+@media (max-width:420px){.tiles{grid-template-columns:1fr 1fr} .tile .k{font-size:11px} .narrow{margin-top:3vh}}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;scroll-behavior:auto!important}}
 </style>
 {% block head %}{% endblock %}
 </head>
@@ -70,6 +114,11 @@ label{font-size:13px;color:var(--soft);font-weight:600}
 {% if me %}
 <header class="bar"><div class="in">
   <span class="logo"></span><a class="brand" href="{{ url_for('overview') }}">YoungWonks Focus</a>
+  <button class="burger" type="button" aria-label="Menu" aria-expanded="false" aria-controls="site-menu">
+    <svg class="m" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M2 5h14M2 9h14M2 13h14"/></svg>
+    <svg class="x" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M4 4l10 10M14 4L4 14"/></svg>
+  </button>
+  <div class="navwrap" id="site-menu">
   <nav>
     <a href="{{ url_for('overview') }}" class="{{ 'on' if active == 'days' }}">Activity</a>
     <a href="{{ url_for('sites_view') }}" class="{{ 'on' if active == 'sites' }}">Websites</a>
@@ -80,6 +129,7 @@ label{font-size:13px;color:var(--soft);font-weight:600}
     {% if me.role == 'admin' and service_owner(me) %}<a href="{{ url_for('admin') }}" class="{{ 'on' if active == 'admin' }}">Households</a>{% endif %}
   </nav>
   <form method="post" action="{{ url_for('logout') }}"><input type="hidden" name="csrf" value="{{ csrf_token() }}"><button class="linkbtn">Sign out</button></form>
+  </div>
 </div></header>
 {% endif %}
 <main>{% if request.args.get('again') %}<div class="card narrow" style="margin-bottom:14px;border-color:#e2b93b">
@@ -87,5 +137,75 @@ label{font-size:13px;color:var(--soft);font-weight:600}
   <div class="muted small" style="margin-top:4px">The page had been open for a while, or your browser did not keep this site's cookie.
   If you see this again, allow cookies for this site (or turn off private browsing or a cookie-blocking extension), or use another browser.</div></div>{% endif %}
 {% block body %}{% endblock %}</main>
+<script>
+(function () {
+  // The menu button on narrow screens.
+  var bar = document.querySelector('header.bar'), burger = bar && bar.querySelector('.burger');
+  if (burger) {
+    var setMenu = function (open) { bar.classList.toggle('open', open); burger.setAttribute('aria-expanded', open ? 'true' : 'false'); };
+    burger.addEventListener('click', function () { setMenu(!bar.classList.contains('open')); });
+    document.addEventListener('keydown', function (e) { if (e.key === 'Escape') setMenu(false); });
+    document.addEventListener('click', function (e) { if (!bar.contains(e.target)) setMenu(false); });
+  }
+  // Dropdowns: each <select> gets a button and a panel. The <select> itself still holds the value and is
+  // what the form sends, so everything keeps working without this script.
+  var chevron = '<svg class="c" viewBox="0 0 10 6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 1l4 4 4-4"/></svg>';
+  var tick = '<svg class="k" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 6.5l2.8 2.8L10 3.5"/></svg>';
+  var openOne = null, serial = 0;
+  function close(dd) { if (!dd) return; dd.classList.remove('open', 'up', 'right'); dd.querySelector('.dd-btn').setAttribute('aria-expanded', 'false'); if (openOne === dd) openOne = null; }
+  Array.prototype.forEach.call(document.querySelectorAll('select'), function (select) {
+    var toned = select.classList.contains('pick'), id = 'dd-' + (++serial);
+    var dd = document.createElement('span'); dd.className = 'dd' + (toned ? ' round' : '');
+    if (select.style.display === 'block' || getComputedStyle(select).display === 'block') dd.classList.add('block');
+    if (select.style.maxWidth) dd.style.maxWidth = select.style.maxWidth;
+    if (select.classList.contains('field') && select.style.width !== 'auto') dd.style.width = '100%';
+    select.parentNode.insertBefore(dd, select); dd.appendChild(select); select.tabIndex = -1; select.setAttribute('aria-hidden', 'true');
+    var btn = document.createElement('button'); btn.type = 'button'; btn.className = 'dd-btn';
+    btn.setAttribute('aria-haspopup', 'listbox'); btn.setAttribute('aria-expanded', 'false'); btn.setAttribute('aria-controls', id);
+    var label = select.getAttribute('aria-label') || (select.id && document.querySelector('label[for="' + select.id + '"]') || {}).textContent || '';
+    var menu = document.createElement('ul'); menu.className = 'dd-menu'; menu.id = id; menu.setAttribute('role', 'listbox'); menu.tabIndex = -1;
+    var items = Array.prototype.map.call(select.options, function (option, index) {
+      var li = document.createElement('li'); li.className = 'dd-opt' + (toned ? ' ' + option.value : ''); li.setAttribute('role', 'option'); li.dataset.index = index;
+      var text = document.createElement('span'); text.textContent = option.textContent;
+      if (option.dataset.desc) { var small = document.createElement('small'); small.textContent = option.dataset.desc; text.appendChild(small); }
+      li.innerHTML = (toned ? '<span class="dot"></span>' : ''); li.appendChild(text); li.insertAdjacentHTML('beforeend', tick);
+      li.addEventListener('click', function () { choose(index); });
+      menu.appendChild(li); return li;
+    });
+    var at = select.selectedIndex;
+    function paint() {
+      var option = select.options[select.selectedIndex];
+      btn.innerHTML = (toned ? '<span class="dot"></span>' : '') + '<span class="t"></span>' + chevron;
+      btn.querySelector('.t').textContent = option ? option.textContent : '';
+      btn.setAttribute('aria-label', (label ? label.trim() + ': ' : '') + (option ? option.textContent : ''));
+      if (toned) dd.className = dd.className.replace(/ ?tone-\S+/g, '') + ' tone-' + (option ? option.value : '');
+      items.forEach(function (li, i) { li.setAttribute('aria-selected', i === select.selectedIndex ? 'true' : 'false'); });
+    }
+    function mark(i) { at = Math.max(0, Math.min(items.length - 1, i)); items.forEach(function (li, n) { li.classList.toggle('at', n === at); }); items[at] && items[at].scrollIntoView({ block: 'nearest' }); }
+    function open() {
+      if (openOne && openOne !== dd) close(openOne);
+      dd.classList.add('open'); btn.setAttribute('aria-expanded', 'true'); openOne = dd; mark(select.selectedIndex);
+      var box = menu.getBoundingClientRect();  // keep the panel on the screen
+      if (box.right > window.innerWidth - 8) dd.classList.add('right');
+      if (box.bottom > window.innerHeight - 8 && btn.getBoundingClientRect().top > box.height + 16) dd.classList.add('up');
+    }
+    function choose(i) {
+      var changed = select.selectedIndex !== i; select.selectedIndex = i; paint(); close(dd); btn.focus();
+      if (changed) select.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+    btn.addEventListener('click', function () { dd.classList.contains('open') ? close(dd) : open(); });
+    btn.addEventListener('keydown', function (e) {
+      var isOpen = dd.classList.contains('open');
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); if (!isOpen) open(); else mark(at + (e.key === 'ArrowDown' ? 1 : -1)); }
+      else if ((e.key === 'Enter' || e.key === ' ') && isOpen) { e.preventDefault(); choose(at); }
+      else if (e.key === 'Escape' && isOpen) { e.preventDefault(); close(dd); }
+      else if (e.key === 'Tab') close(dd);
+    });
+    select.addEventListener('change', paint);
+    dd.appendChild(btn); dd.appendChild(menu); paint();
+  });
+  document.addEventListener('click', function (e) { if (openOne && !openOne.contains(e.target)) close(openOne); });
+})();
+</script>
 </body>
 </html>

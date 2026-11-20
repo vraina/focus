@@ -553,7 +553,9 @@ def register(app, svc):
                        "so switching to one during a sprint shows as a switch away unless it is ticked for that sprint."}]
         for group in groups:
             group["apps"] = [r for r in rows if r["state"] == group["key"]]
-        return render_template("apps.html", groups=groups, any_apps=bool(rows), lists=lists, picked=picked["key"], states=APP_STATES)
+        hints = {"distraction": "Counts as distraction, all day", "work": "Not a distraction · ticked for sprints",
+                 "neutral": "Not a distraction · not ticked for sprints"}
+        return render_template("apps.html", groups=groups, any_apps=bool(rows), lists=lists, picked=picked["key"], states=APP_STATES, hints=hints)
 
     # --- Settings ------------------------------------------------------------------------------
 

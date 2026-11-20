@@ -25,7 +25,7 @@ computers pick the change up within a minute or two. Web browsers are not listed
         <input type="hidden" name="csrf" value="{{ csrf_token() }}"><input type="hidden" name="list" value="{{ picked }}">
         <input type="hidden" name="bundle" value="{{ a.bundle }}">
         <select class="pick {{ a.state }}" name="state" onchange="this.form.submit()" aria-label="Group for {{ a.name }}">
-          {% for key, label in states.items() %}<option value="{{ key }}" {{ 'selected' if key == a.state }}>{{ label }}</option>{% endfor %}
+          {% for key, label in states.items() %}<option value="{{ key }}" data-desc="{{ hints[key] }}" {{ 'selected' if key == a.state }}>{{ label }}</option>{% endfor %}
         </select>
         <noscript><button class="ghost">Save</button></noscript>
       </form>
