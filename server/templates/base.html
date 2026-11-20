@@ -38,6 +38,12 @@ h1{font-size:28px;margin:0 0 4px;letter-spacing:-.3px} h2{font-size:12px;letter-
 .field{width:100%;padding:10px 12px;margin:4px 0 12px;border-radius:9px;border:1px solid var(--line);background:var(--canvas);color:var(--ink);font:inherit}
 textarea.field{min-height:120px;font-family:ui-monospace,Menlo,monospace;font-size:13px}
 label{font-size:13px;color:var(--soft);font-weight:600}
+.pick{appearance:none;-webkit-appearance:none;border:1px solid transparent;border-radius:999px;padding:6px 28px 6px 12px;font:inherit;font-size:13px;font-weight:650;cursor:pointer;
+  background-repeat:no-repeat;background-position:right 10px center;background-size:9px;transition:filter .12s}
+.pick:hover{filter:brightness(.96)} .pick:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
+.pick.distraction{color:#c8323a;background-color:rgba(230,71,77,.12);border-color:rgba(230,71,77,.28);background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23c8323a' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")}
+.pick.work{color:#17895a;background-color:rgba(33,173,112,.13);border-color:rgba(33,173,112,.30);background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%2317895a' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")}
+.pick.neutral{color:#5a55e0;background-color:rgba(94,87,240,.11);border-color:rgba(94,87,240,.26);background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%235a55e0' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")}
 .narrow{max-width:400px;margin:7vh auto 0} .ok{color:var(--good);font-weight:600} .err{color:var(--bad);font-weight:600}
 .code{font:700 34px/1 ui-monospace,Menlo,monospace;letter-spacing:4px;padding:16px 20px;border-radius:12px;background:var(--canvas);display:inline-block}
 header.bar nav{display:flex;flex-wrap:wrap}

@@ -494,7 +494,7 @@ def register(app, svc):
 
     # --- Apps: how each app counts, per person ----------------------------------------------------
 
-    APP_STATES = {"work": "Work", "distraction": "Distraction", "neutral": "Doesn't count"}
+    APP_STATES = {"distraction": "Distraction", "work": "Work app", "neutral": "Other app"}
 
     def app_lists(account: dict, family: dict) -> list[dict]:
         """The kids of a household share one list, which admins manage. Every adult has their own, private one."""
@@ -519,9 +519,18 @@ def register(app, svc):
         rows = [{"bundle": d["bundleId"], "name": d.get("name", d["bundleId"]), "state": d["state"], "reason": d.get("reason", ""),
                  "by_person": d.get("source") == "parent"}
                 for d in db["apps"].find({"scope": picked["scope"]}).sort("name", 1).limit(3000)]
-        order = {"distraction": 0, "work": 1, "neutral": 2}
-        rows.sort(key=lambda r: (order.get(r["state"], 3), r["name"].lower()))
-        return render_template("apps.html", apps=rows, lists=lists, picked=picked["key"], states=APP_STATES)
+        rows.sort(key=lambda r: r["name"].lower())
+        groups = [
+            {"key": "distraction", "title": "Distractions", "pill": "bad", "empty": "No apps are marked as a distraction yet.",
+             "detail": "Time in these apps counts as distraction, all day and during a sprint."},
+            {"key": "work", "title": "Work apps", "pill": "good", "empty": "No apps are marked as work yet.",
+             "detail": "Never a distraction. These are ticked automatically when a sprint is set up."},
+            {"key": "neutral", "title": "Other apps", "pill": "brand", "empty": "No other apps yet.",
+             "detail": "Never a distraction. Utilities and everyday tools that are neither work nor play. They are not ticked for a sprint, "
+                       "so switching to one during a sprint shows as a switch away unless it is ticked for that sprint."}]
+        for group in groups:
+            group["apps"] = [r for r in rows if r["state"] == group["key"]]
+        return render_template("apps.html", groups=groups, any_apps=bool(rows), lists=lists, picked=picked["key"], states=APP_STATES)
 
     # --- Settings ------------------------------------------------------------------------------
 

@@ -16,14 +16,23 @@ struct AppsView: View {
         var id: String
         var title: String
         var detail: String
+        var empty: String
         var tint: Color
     }
-    private let groups = [
-        Group(id: "distraction", title: "Distraction", detail: "Counts towards distraction all day, and during a sprint.", tint: Theme.bad),
-        Group(id: "work", title: "Work", detail: "Ticked by default when a sprint is set up.", tint: Theme.good),
-        Group(id: "neutral", title: "Doesn't count", detail: "Ignored all day. During a sprint it counts as away unless it is ticked.", tint: .secondary),
+    /// Distractions first and always shown, then everything that is not one, split by whether a sprint ticks it.
+    private let distractions = Group(
+        id: "distraction", title: "Distractions",
+        detail: "Time in these apps counts as distraction, all day and during a sprint.",
+        empty: "No apps are marked as a distraction yet.", tint: Theme.bad)
+    private let notDistractions = [
+        Group(id: "work", title: "Work apps",
+              detail: "Never a distraction. These are ticked automatically when a sprint is set up.",
+              empty: "No apps are marked as work yet.", tint: Theme.good),
+        Group(id: "neutral", title: "Other apps",
+              detail: "Never a distraction. Utilities and everyday tools that are neither work nor play. They are not ticked for a sprint, so switching to one during a sprint shows as a switch away unless you tick it for that sprint.",
+              empty: "No other apps yet.", tint: Theme.brand),
     ]
-    private static let labels = [("work", "Work"), ("distraction", "Distraction"), ("neutral", "Doesn't count")]
+    private static let labels = [("distraction", "Distraction"), ("work", "Work app"), ("neutral", "Other app")]
 
     private var managesKids: Bool { lists.kids != nil }
     private var onKids: Bool { managesKids && showKids }
@@ -43,7 +52,7 @@ struct AppsView: View {
             VStack(alignment: .leading, spacing: 16) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Apps").font(Theme.title(30))
-                    Text("How time in each app counts. Nothing is ever blocked.")
+                    Text("Which apps count as a distraction, and which do not. Nothing is ever blocked.")
                         .font(.system(size: 14)).foregroundStyle(.secondary)
                 }
                 if managesKids {
@@ -60,19 +69,11 @@ struct AppsView: View {
                            : "Apps are labelled once this Mac is linked to a household. Until then only a short built-in list of apps counts as distraction.",
                            tint: Theme.warn, icon: "square.grid.2x2")
                 }
-                ForEach(groups) { group in
-                    let list = entries.filter { $0.state == group.id }
-                    if !list.isEmpty {
-                        VStack(alignment: .leading, spacing: 10) {
-                            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                                Text(group.title).font(.system(size: 15, weight: .bold)).foregroundStyle(group.tint)
-                                Text("\(list.count)").font(.system(size: 12, weight: .semibold)).foregroundStyle(.secondary)
-                            }
-                            Text(group.detail).font(.system(size: 12)).foregroundStyle(.secondary)
-                            ForEach(list) { app in row(app) }
-                        }
-                        .card()
-                    }
+                if !entries.isEmpty {
+                    section(distractions)
+                    Text("NOT DISTRACTIONS").font(.system(size: 11, weight: .bold)).kerning(0.8).foregroundStyle(.secondary)
+                        .padding(.top, 6)
+                    ForEach(notDistractions) { section($0) }
                 }
                 Text(footnote).font(.system(size: 12)).foregroundStyle(.secondary)
             }
@@ -91,6 +92,23 @@ struct AppsView: View {
         return "A label can be changed by a household admin, on the website or in their own app." + browsers
     }
 
+    private func section(_ group: Group) -> some View {
+        let list = entries.filter { $0.state == group.id }
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(group.title).font(.system(size: 15, weight: .bold)).foregroundStyle(group.tint)
+                Text("\(list.count)").font(.system(size: 12, weight: .semibold)).foregroundStyle(.secondary)
+            }
+            Text(group.detail).font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            if list.isEmpty {
+                Text(group.empty).font(.system(size: 13)).foregroundStyle(.tertiary).padding(.vertical, 2)
+            }
+            ForEach(list) { app in row(app) }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .card()
+    }
+
     private func row(_ app: AppEntry) -> some View {
         HStack(alignment: .top, spacing: 10) {
             if let icon = AppIcons.icon(bundleId: app.bundleId) {
@@ -106,12 +124,7 @@ struct AppsView: View {
             }
             Spacer(minLength: 8)
             if editable {
-                Picker("", selection: Binding(get: { app.state }, set: { change(app, to: $0) })) {
-                    ForEach(AppsView.labels, id: \.0) { Text($0.1).tag($0.0) }
-                }
-                .labelsHidden()
-                .frame(width: 140)
-                .accessibilityLabel("How \(app.name) counts")
+                LabelMenu(state: app.state, name: app.name) { change(app, to: $0) }
             }
         }
     }
@@ -135,5 +148,85 @@ struct AppsView: View {
             let source = parts[0] == "kids" ? lists.kids ?? [] : lists.apps
             if expired || source.first(where: { $0.id == parts[1] })?.state == state { pending[key] = nil }
         }
+    }
+}
+
+/// The control that moves an app between groups: a coloured pill showing where it is now. Clicking it opens
+/// a small panel with the three choices and what each one means.
+private struct LabelMenu: View {
+    var state: String
+    var name: String
+    var choose: (String) -> Void
+    @State private var hovering = false
+    @State private var open = false
+
+    fileprivate struct Option: Identifiable {
+        var id: String
+        var title: String
+        var detail: String
+        var tint: Color
+    }
+    fileprivate static let options = [
+        Option(id: "distraction", title: "Distraction", detail: "Counts as distraction, all day", tint: Theme.bad),
+        Option(id: "work", title: "Work app", detail: "Not a distraction · ticked for sprints", tint: Theme.good),
+        Option(id: "neutral", title: "Other app", detail: "Not a distraction · not ticked for sprints", tint: Theme.brand),
+    ]
+
+    var body: some View {
+        let current = LabelMenu.options.first { $0.id == state } ?? LabelMenu.options[2]
+        Button { open.toggle() } label: {
+            HStack(spacing: 6) {
+                Circle().fill(current.tint).frame(width: 7, height: 7)
+                Text(current.title).font(.system(size: 12.5, weight: .semibold)).foregroundStyle(current.tint)
+                Image(systemName: "chevron.down").font(.system(size: 8.5, weight: .bold)).foregroundStyle(current.tint.opacity(0.7))
+                    .rotationEffect(.degrees(open ? 180 : 0))
+            }
+            .padding(.horizontal, 11).padding(.vertical, 6)
+            .background(current.tint.opacity(hovering || open ? 0.20 : 0.12), in: Capsule())
+            .overlay(Capsule().strokeBorder(current.tint.opacity(0.25)))
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .animation(.easeOut(duration: 0.12), value: hovering)
+        .accessibilityLabel("Group for \(name): \(current.title)")
+        .popover(isPresented: $open, arrowEdge: .bottom) {
+            VStack(alignment: .leading, spacing: 2) {
+                ForEach(LabelMenu.options) { option in
+                    LabelChoice(option: option, selected: option.id == state) {
+                        open = false
+                        choose(option.id)
+                    }
+                }
+            }
+            .padding(6)
+            .frame(width: 290)
+        }
+    }
+}
+
+private struct LabelChoice: View {
+    var option: LabelMenu.Option
+    var selected: Bool
+    var action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                Circle().fill(option.tint).frame(width: 9, height: 9)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(option.title).font(.system(size: 13, weight: .semibold))
+                    Text(option.detail).font(.system(size: 11.5)).foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 8)
+                if selected { Image(systemName: "checkmark").font(.system(size: 11, weight: .bold)).foregroundStyle(option.tint) }
+            }
+            .padding(.horizontal, 10).padding(.vertical, 7)
+            .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(hovering ? option.tint.opacity(0.12) : .clear))
+            .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
     }
 }

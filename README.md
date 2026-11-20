@@ -102,7 +102,8 @@ version and whether an update is still pending. A sprint that is running when an
 
 ## Apps
 
-Every app seen in use on a linked Mac gets a label the first time: **Work**, **Distraction** or **Doesn't count**.
+Every app seen in use on a linked Mac is put in a group the first time: **Distractions**, or one of the two kinds of
+"not a distraction": **Work apps** (ticked for sprints) and **Other apps** (utilities; not ticked for sprints).
 Claude picks it from the app's name; a household admin can change it on the website's Apps page (each adult
 changes their own). The kids of a household share one list; an adult's list is private.
 
