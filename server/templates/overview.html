@@ -4,9 +4,10 @@
 {% block body %}
 <h1>Last 14 days</h1>
 <p class="muted">Tracked time is sprint time plus the time the Mac was in use outside sprints.</p>
+{% include "_filter.html" %}
 <div class="stack" style="margin-top:18px">
 {% for d in days %}
-  <a class="card row" href="{{ url_for('day_view', day=d.key) }}" style="color:inherit">
+  <a class="card row" href="{{ url_for('day_view', day=d.key, **q) }}" style="color:inherit">
     <div style="min-width:120px"><div style="font-weight:700">{{ d.label }}</div><div class="muted small">{{ d.date }}</div></div>
     {% if d.totals.tracked %}
       <div style="flex:1;min-width:140px">

@@ -1,0 +1,15 @@
+{# Child and computer filter. Shown only when there is more than one to choose from. #}
+{% set people = profiles() %}
+{% if people|length > 1 or (people and people[0].devices|length > 1) %}
+<div class="row" style="margin:14px 0 4px;gap:8px">
+  <a class="chip {{ 'on' if not q }}" href="{{ url_for(request.endpoint, **request.view_args) }}">Everyone</a>
+  {% for p in people %}
+    <a class="chip {{ 'on' if q.get('user') == p.user and not q.get('device') }}"
+       href="{{ url_for(request.endpoint, user=p.user, **request.view_args) }}">{{ p.user }}</a>
+    {% if p.devices|length > 1 %}{% for d in p.devices %}
+      <a class="chip sub {{ 'on' if q.get('user') == p.user and q.get('device') == d }}"
+         href="{{ url_for(request.endpoint, user=p.user, device=d, **request.view_args) }}">{{ p.user }} · {{ d }}</a>
+    {% endfor %}{% endif %}
+  {% endfor %}
+</div>
+{% endif %}

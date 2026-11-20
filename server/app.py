@@ -56,6 +56,11 @@ def now() -> str:
     return iso(datetime.now(timezone.utc))
 
 
+def child_key(user: str) -> str:
+    """A child is identified by their Mac login name. As a field name it cannot hold dots or dollar signs."""
+    return re.sub(r"[.$\x00]", "_", user.strip())[:60] or "unknown"
+
+
 def clean_host(raw) -> str | None:
     host = str(raw or "").strip().lower().rstrip(".")
     if host.startswith("www."):
@@ -93,7 +98,9 @@ def create_app(db=None, classify=classifier.classify, review=classifier.review_r
         out = {"host": doc["_id"], "state": doc["state"], "reason": doc.get("reason", ""),
                "category": doc.get("category", ""), "updatedAt": doc.get("updatedAt", "")}
         if doc.get("allowedUntil"):
-            out["allowedUntil"] = doc["allowedUntil"]  # approved "needed for work" window
+            out["allowedUntil"] = doc["allowedUntil"]  # older records: a window that applied to everyone
+        if doc.get("approvedFor"):
+            out["approvedFor"] = doc["approvedFor"]  # approved "needed for work" windows, one per child
         return out
 
     @app.get("/healthz")
@@ -152,22 +159,24 @@ def create_app(db=None, classify=classifier.classify, review=classifier.review_r
                    "createdAt": now(), "updatedAt": now()}
             sites.insert_one(doc)
 
+        user, device = str(body.get("user") or "").strip()[:60], str(body.get("device") or "").strip()[:80]
         moment = datetime.now(timezone.utc)
         day = local_day(moment)
         entry = {"_id": request_id, "host": host, "reason": reason, "requestedMinutes": minutes,
                  "wantsPermanent": wants_permanent, "at": iso(moment), "ts": moment.timestamp(), "day": day,
                  "localTime": moment.astimezone(zone).strftime("%-I:%M %p"),
-                 "who": f"{str(body.get('user') or 'Your child')[:60]} on {str(body.get('device') or 'their Mac')[:80]}",
+                 "user": user, "device": device, "who": f"{user or 'Your child'} on {device or 'their Mac'}",
                  "grantedMinutes": 0}
 
         if doc["state"] == "locked":
             entry.update(decision="deny", explanation="Your parent decided this site stays a distraction, so it cannot be approved here.")
         elif doc["state"] in ("productive", "allowed"):
             entry.update(decision="approve_permanent", explanation="This site is already not counted as a distraction.")
-        elif requests_log.count_documents({"host": host, "day": day}) >= MAX_REQUESTS_PER_SITE_PER_DAY:
+        elif requests_log.count_documents({"host": host, "day": day, "user": user}) >= MAX_REQUESTS_PER_SITE_PER_DAY:
             entry.update(decision="deny", explanation="There have been several requests for this site today already. Talk to your parent if you still need it.")
         else:
-            history = list(requests_log.find({"host": host}).sort("at", -1).limit(6))[::-1]
+            # Each child's request is judged on that child's own history with the site.
+            history = list(requests_log.find({"host": host, "user": user}).sort("at", -1).limit(6))[::-1]
             # A site the parent listed themselves can be approved for a while, but only the parent can clear it for good.
             allow_permanent = doc.get("source") != "list" and not body.get("onParentList")
             verdict = review(host, doc.get("reason", ""), reason, minutes, wants_permanent, history, allow_permanent)
@@ -182,10 +191,11 @@ def create_app(db=None, classify=classifier.classify, review=classifier.review_r
                 granted = max(5, min(verdict.get("minutes") or minutes, minutes, classifier.MAX_GRANT_MINUTES))
                 until = iso(moment + timedelta(minutes=granted))
                 entry["allowedUntil"] = until
-                sites.update_one({"_id": host}, {"$set": {"allowedUntil": until, "updatedAt": now()}})
+                # The window belongs to the child who asked; it does not open the site for anyone else.
+                sites.update_one({"_id": host}, {"$set": {f"approvedFor.{child_key(user)}": until, "updatedAt": now()}})
             elif decision == "approve_permanent":
                 sites.update_one({"_id": host}, {"$set": {"state": "productive", "source": "request", "updatedAt": now()},
-                                                 "$unset": {"allowedUntil": ""}})
+                                                 "$unset": {"allowedUntil": "", "approvedFor": ""}})
             entry.update(decision=decision, grantedMinutes=granted, explanation=verdict["explanation"][:600])
 
         try:
@@ -216,13 +226,14 @@ def create_app(db=None, classify=classifier.classify, review=classifier.review_r
         if earlier:
             return reply(earlier)
         task = str(body.get("task") or "")[:200]
+        user, device = str(body.get("user") or "").strip()[:60], str(body.get("device") or "").strip()[:80]
         verdict = label_search(query, task)
         if verdict is None:
             return jsonify(error="not labelled yet"), 503  # the helper keeps the request and retries
         moment = datetime.now(timezone.utc)
         entry = {"_id": search_id, "at": iso(moment), "ts": moment.timestamp(), "day": local_day(moment),
                  "localTime": moment.astimezone(zone).strftime("%-I:%M %p"),
-                 "who": f"{str(body.get('user') or 'Your child')[:60]} on {str(body.get('device') or 'their Mac')[:80]}",
+                 "user": user, "device": device, "who": f"{user or 'Your child'} on {device or 'their Mac'}",
                  "engine": clean_host(body.get("engine")) or "", "label": verdict["label"], "inSprint": bool(task)}
         if verdict["label"] == "distraction":
             entry.update(text=query, reason=verdict["reason"], task=task)
@@ -249,8 +260,17 @@ def create_app(db=None, classify=classifier.classify, review=classifier.review_r
         new_sites = list(sites.find({"source": "ai", "createdAt": {"$gte": iso(start), "$lt": iso(start + timedelta(days=1))}})
                          .sort("createdAt", -1).limit(200))
         day_searches = list(searches.find({"day": day}).sort([("at", -1), ("ts", -1)]))
-        counts = {label: sum(1 for x in day_searches if x["label"] == label) for label in ("work", "distraction", "personal")}
         off_topic = [x for x in day_searches if x["label"] == "distraction"]
+
+        def child_of(record: dict) -> str:
+            return record.get("user") or record.get("who", "").split(" on ")[0] or "Your child"
+
+        children = []
+        for name in sorted({child_of(x) for x in entries + day_searches}):
+            mine = [x for x in day_searches if child_of(x) == name]
+            children.append({"name": name, "requests": [r for r in entries if child_of(r) == name],
+                             "counts": {k: sum(1 for x in mine if x["label"] == k) for k in ("work", "distraction", "personal")},
+                             "searches": [x for x in mine if x["label"] == "distraction"]})
         # A day of nothing but schoolwork searches is not worth an email.
         if not entries and not new_sites and not off_topic:
             digests.update_one({"_id": day}, {"$set": {"result": "nothing to report"}})
@@ -258,7 +278,7 @@ def create_app(db=None, classify=classifier.classify, review=classifier.review_r
         base = os.environ.get("PUBLIC_URL", "").rstrip("/")
         subject, body_html = mailer.digest_email(start.strftime("%A %-d %B"), entries, new_sites,
                                                  lambda host: f"{base}/decide?t={signer.dumps(host)}",
-                                                 search_counts=counts, distraction_searches=off_topic,
+                                                 children=children,
                                                  dashboard_url=f"{base}/dashboard/day/{day}" if os.environ.get("PARENT_PASSWORD") else "")
         if send_email(os.environ.get("PARENT_EMAIL", ""), subject, body_html):
             digests.update_one({"_id": day}, {"$set": {"result": "sent", "sentAt": now()}}, upsert=True)
@@ -276,8 +296,32 @@ def create_app(db=None, classify=classifier.classify, review=classifier.review_r
             return jsonify(error="day must be YYYY-MM-DD"), 400
         return jsonify(day=day, result=send_digest(day, force=True))
 
+    keep_days = max(1, int(os.environ.get("MEDIA_KEEP_DAYS", "14")))
+
+    def cleanup_media() -> int:
+        """Deletes pictures and clips older than MEDIA_KEEP_DAYS. Returns how many were removed.
+
+        Only the picture files go. The record of every switch (site, times, how long) is kept, so the
+        numbers for older days stay complete. A file's id starts with its session's date (yyyyMMdd).
+        """
+        cutoff = (datetime.now(zone) - timedelta(days=keep_days)).strftime("%Y%m%d")
+        return db["media"].delete_many({"_id": {"$regex": r"^\d{8}-", "$lt": cutoff}}).deleted_count
+
+    app.cleanup_media = cleanup_media
+    app.media_keep_days = keep_days
+
     def scheduler():
+        last_cleanup = None
         while True:
+            try:
+                hour = datetime.now(timezone.utc).strftime("%Y-%m-%d %H")
+                if hour != last_cleanup:  # once an hour is plenty
+                    removed = cleanup_media()
+                    last_cleanup = hour
+                    if removed:
+                        logging.info("removed %d picture(s) older than %d days", removed, keep_days)
+            except Exception:
+                logging.exception("media cleanup")
             try:
                 local = datetime.now(timezone.utc).astimezone(zone)
                 if local.hour >= digest_hour:
@@ -291,7 +335,7 @@ def create_app(db=None, classify=classifier.classify, review=classifier.review_r
     if start_scheduler:
         threading.Thread(target=scheduler, daemon=True, name="digest").start()
 
-    dashboard.register(app, db, zone, signer)
+    dashboard.register(app, db, zone, signer, keep_days)
 
     @app.get("/api/sites")
     def api_sites():
@@ -328,7 +372,10 @@ small{{display:block;font-weight:400;font-size:13px;opacity:.9;margin-top:2px}}
         history = "".join(
             f'<p class="muted">{e(r.get("day", ""))} {e(r.get("localTime", ""))} · {e(mailer.DECISION_LABEL.get(r["decision"], ""))}</p>'
             f'<blockquote>{e(r.get("reason", ""))}</blockquote>' for r in recent)
-        window = f'<p class="muted">Approved until {e(doc["allowedUntil"])} (UTC)</p>' if doc.get("allowedUntil", "") > now() else ""
+        active = [f"{who}, until {until} (UTC)" for who, until in (doc.get("approvedFor") or {}).items() if until > now()]
+        if doc.get("allowedUntil", "") > now():
+            active.append(f"everyone, until {doc['allowedUntil']} (UTC)")
+        window = f'<p class="muted">Approved for now: {e("; ".join(active))}</p>' if active else ""
         buttons = "".join(
             f'<button class="{a}{" pick" if a == picked else ""}" name="a" value="{a}">{e(label)}<small>{e(detail)}</small></button>'
             for a, (label, detail) in DECISION_TEXT.items())
@@ -347,7 +394,7 @@ small{{display:block;font-weight:400;font-size:13px;opacity:.9;margin-top:2px}}
         # The parent's word is final, so it also ends any approval window the reviewer granted.
         result = sites.update_one({"_id": host}, {"$set": {
             "state": DECISIONS[action], "source": "parent", "decidedAt": now(), "updatedAt": now()},
-            "$unset": {"allowedUntil": ""}})
+            "$unset": {"allowedUntil": "", "approvedFor": ""}})
         if result.matched_count == 0:
             abort(404)
         label, detail = DECISION_TEXT[action]

@@ -5,6 +5,7 @@ Read-only. Everything here comes from MongoDB, where the Mac uploads its records
 import hashlib
 import hmac
 import os
+import re
 import secrets
 from datetime import datetime, timedelta, timezone
 from functools import wraps
@@ -35,7 +36,7 @@ def level(fraction: float) -> str:
     return "good" if fraction < 0.05 else ("warn" if fraction < 0.15 else "bad")
 
 
-def register(app, db, zone, signer):
+def register(app, db, zone, signer, keep_days: int = 14):
     password = os.environ.get("PARENT_PASSWORD", "")
     parent_email = os.environ.get("PARENT_EMAIL", "").strip().lower()
     app.config.update(
@@ -129,9 +130,34 @@ def register(app, db, zone, signer):
         fmt = "%Y-%m-%dT%H:%M:%SZ"
         return start, start.astimezone(timezone.utc).strftime(fmt), (start + timedelta(days=1)).astimezone(timezone.utc).strftime(fmt)
 
-    def sessions_between(lo: str, hi: str) -> list[dict]:
+    def scope() -> dict:
+        """Which child, and optionally which computer, the page is narrowed to. Empty means everyone."""
+        user = request.args.get("user", "").strip()[:60]
+        device = request.args.get("device", "").strip()[:80] if user else ""
+        return {k: v for k, v in (("user", user), ("device", device)) if v}
+
+    def profiles() -> list[dict]:
+        """Each child seen in the last 60 days, with the computers they used."""
+        since = (datetime.now(timezone.utc) - timedelta(days=60)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        found: dict[str, set] = {}
+        for row in starts.aggregate([{"$match": {"startedAt": {"$gte": since}}},
+                                     {"$group": {"_id": {"user": "$user", "device": "$device"}}}]):
+            found.setdefault(row["_id"].get("user") or "", set()).add(row["_id"].get("device") or "")
+        return [{"user": user, "devices": sorted(found[user])} for user in sorted(found) if user]
+
+    def who_filter(q: dict) -> dict:
+        """The same narrowing for requests and searches. Older records only carry the combined "who" text."""
+        if not q:
+            return {}
+        if "device" in q:
+            return {"$or": [{"user": q["user"], "device": q["device"]}, {"who": f"{q['user']} on {q['device']}"}]}
+        return {"$or": [{"user": q["user"]}, {"who": {"$regex": "^" + re.escape(q["user"]) + " on "}}]}
+
+    app.jinja_env.globals.update(scope=scope, profiles=profiles)
+
+    def sessions_between(lo: str, hi: str, q: dict | None = None) -> list[dict]:
         """Every sprint and outside-sprint stretch that started in the window, with its switches and totals."""
-        found = list(starts.find({"startedAt": {"$gte": lo, "$lt": hi}}).sort("startedAt", -1))
+        found = list(starts.find({"startedAt": {"$gte": lo, "$lt": hi}, **(q or {})}).sort("startedAt", -1))
         ids = [s["_id"] for s in found]
         end_by_id = {e["_id"]: e for e in ends.find({"_id": {"$in": ids}})}
         events_by_id: dict[str, list] = {}
@@ -174,13 +200,14 @@ def register(app, db, zone, signer):
         today = datetime.now(zone).replace(hour=0, minute=0, second=0, microsecond=0)
         first = today - timedelta(days=13)
         fmt = "%Y-%m-%dT%H:%M:%SZ"
+        q = scope()
         sessions = sessions_between(first.astimezone(timezone.utc).strftime(fmt),
-                                    (today + timedelta(days=1)).astimezone(timezone.utc).strftime(fmt))
+                                    (today + timedelta(days=1)).astimezone(timezone.utc).strftime(fmt), q)
         by_day: dict[str, list] = {}
         for s in sessions:
             by_day.setdefault(local(s["start"]).strftime("%Y-%m-%d"), []).append(s)
         search_counts: dict[str, int] = {}
-        for x in db["searches"].find({"day": {"$gte": first.strftime("%Y-%m-%d")}, "label": "distraction"}, {"day": 1}):
+        for x in db["searches"].find({"day": {"$gte": first.strftime("%Y-%m-%d")}, "label": "distraction", **who_filter(q)}, {"day": 1}):
             search_counts[x["day"]] = search_counts.get(x["day"], 0) + 1
         days = []
         for offset in range(14):
@@ -190,13 +217,18 @@ def register(app, db, zone, signer):
             days.append({"key": key, "label": "Today" if offset == 0 else ("Yesterday" if offset == 1 else d.strftime("%A")),
                          "date": d.strftime("%-d %B"), "totals": totals(mine),
                          "sprints": sum(1 for s in mine if not s["ambient"]), "searches": search_counts.get(key, 0)})
-        return render_template("overview.html", days=days)
+        return render_template("overview.html", days=days, q=q)
 
     @app.get("/dashboard/day/<day>")
     @signed_in
     def day_view(day):
         start, lo, hi = day_bounds(day)
-        sessions = sessions_between(lo, hi)
+        q = scope()
+        sessions = sessions_between(lo, hi, q)
+        several = sum(len(p["devices"]) for p in profiles()) > 1 and "device" not in q
+        # Pictures are only kept for a while; for older days the switches are listed without them.
+        cutoff = (datetime.now(zone) - timedelta(days=keep_days)).strftime("%Y%m%d")
+        pictures_gone = start.strftime("%Y%m%d") < cutoff
         switches = []
         for s in sessions:
             for e in s["events"]:
@@ -206,16 +238,19 @@ def register(app, db, zone, signer):
                     "category": e.get("category", "offTask"), "started": clock(e["startedAt"]), "ended": clock(e["endedAt"]),
                     "away": duration(e.get("durationSeconds", 0)), "sort": e["startedAt"],
                     "during": "" if s["ambient"] else s["task"],
+                    "who": s["who"] if several else "",  # only worth showing when more than one computer is in view
                     "media": [{"role": "First seconds" if m.get("role") == "start" else "Last seconds", "kind": m.get("kind", "image"),
-                               "url": url_for("media_file", sprint_id=e["sprintId"], name=m["file"])} for m in e.get("media", [])],
+                               "url": url_for("media_file", sprint_id=e["sprintId"], name=m["file"])}
+                              for m in e.get("media", []) if not pictures_gone],
                 })
         switches.sort(key=lambda x: x["sort"], reverse=True)
-        day_searches = list(db["searches"].find({"day": day}).sort([("at", -1), ("ts", -1)]))
-        requests_today = list(db["requests"].find({"day": day}).sort([("at", -1), ("ts", -1)]))
+        day_searches = list(db["searches"].find({"day": day, **who_filter(q)}).sort([("at", -1), ("ts", -1)]))
+        requests_today = list(db["requests"].find({"day": day, **who_filter(q)}).sort([("at", -1), ("ts", -1)]))
         for r in requests_today:
             r["decisionLabel"] = DECISION_LABEL.get(r.get("decision"), "")
         return render_template(
-            "day.html", day=day, title=start.strftime("%A %-d %B %Y"), totals=totals(sessions),
+            "day.html", day=day, title=start.strftime("%A %-d %B %Y"), totals=totals(sessions), q=q, several=several,
+            pictures_gone=pictures_gone, keep_days=keep_days,
             previous=(start - timedelta(days=1)).strftime("%Y-%m-%d"),
             following=(start + timedelta(days=1)).strftime("%Y-%m-%d") if start + timedelta(days=1) <= datetime.now(zone) else None,
             sprints=[dict(s, clock=local(s["start"]).strftime("%-I:%M %p")) for s in sessions if not s["ambient"]],
@@ -228,7 +263,8 @@ def register(app, db, zone, signer):
     def sites_view():
         rows = [{"host": d["_id"], "state": STATE_LABEL.get(d.get("state"), d.get("state", "")), "raw": d.get("state", ""),
                  "reason": d.get("reason", ""), "source": d.get("source", ""),
-                 "window": d.get("allowedUntil", "") > datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                 "window": ", ".join(sorted(who for who, until in (d.get("approvedFor") or {}).items()
+                                            if until > datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))),
                  "link": url_for("decide_page", t=signer.dumps(d["_id"]))}
                 for d in db["sites"].find({}).sort("updatedAt", -1).limit(1000)]
         return render_template("sites.html", sites=rows)

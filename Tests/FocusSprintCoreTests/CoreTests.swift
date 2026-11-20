@@ -66,6 +66,14 @@ final class CoreTests: XCTestCase {
         XCTAssertFalse(rules.isKnownDistraction(web("https://espn.com"), sites: sites))
         XCTAssertFalse(rules.isKnownDistraction(web("https://unknown.example.org"), sites: sites))
         XCTAssertFalse(SiteRequest.isValidHost("../etc") || SiteRequest.isValidHost("localhost"))
+
+        // An approval belongs to the child who asked for it.
+        let soon = ISO8601DateFormatter().string(from: Date().addingTimeInterval(600))
+        let mine = SiteEntry(host: "youtube.com", state: "distraction", reason: nil, category: nil, updatedAt: nil,
+                             approvedFor: ["mia_k": soon])
+        XCTAssertTrue(mine.approved(user: "mia.k"))
+        XCTAssertFalse(mine.approved(user: "leo"))
+        XCTAssertEqual(SiteEntry.childKey("mia.k"), "mia_k")
     }
 
     func testSearchWordsFromTabAddress() {

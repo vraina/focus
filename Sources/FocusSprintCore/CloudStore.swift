@@ -116,7 +116,10 @@ public actor CloudStore {
         let sites = try await db["sites"].find().limit(5000).drain().compactMap { doc -> SiteEntry? in
             guard let host = doc["_id"] as? String, let state = doc["state"] as? String else { return nil }
             return SiteEntry(host: host, state: state, reason: doc["reason"] as? String, category: nil, updatedAt: nil,
-                             allowedUntil: doc["allowedUntil"] as? String)
+                             allowedUntil: doc["allowedUntil"] as? String,
+                             approvedFor: (doc["approvedFor"] as? Document).map { windows in
+                                 Dictionary(uniqueKeysWithValues: windows.keys.compactMap { key in (windows[key] as? String).map { (key, $0) } })
+                             })
         }
         try fm.createDirectory(at: cacheSprints, withIntermediateDirectories: true)
         try JSONEncoder().encode(SiteList(sites: sites))

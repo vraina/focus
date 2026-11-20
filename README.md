@@ -65,8 +65,26 @@ Sign in with `PARENT_EMAIL` and `PARENT_PASSWORD`; until `PARENT_PASSWORD` is se
   captured pictures. Clicking a picture opens a viewer with the date, start, time away and end, and previous / next.
 - **Websites:** how each site is treated, with a link to change it.
 
+#### More than one computer or child
+
+Install the app on each Mac with the same service address, device token and Atlas database. A child is identified by
+their Mac login name, so give each child their own, distinct login.
+
+- The dashboard adds everything together by default and offers a filter per child, and per computer when a child uses
+  more than one. Each switch names the computer it came from when several are in view.
+- The daily summary has a section per child.
+- A "needed for work" approval, and the limit of five requests per site per day, belong to the child who asked.
+- Website labels and a parent's "always allow" / "always a distraction" decisions apply to everyone.
+
 It shows what the Mac has uploaded to Atlas, so the Mac's connection string and the service's `MONGODB_DB` must
 point at the same database. Eight wrong passwords from one address lock sign-in for 15 minutes.
+
+### Storage and clean-up
+
+Pictures and clips are stored in Atlas itself (the `media` collection), about 170 KB per picture. To keep the
+database from filling up, the service deletes media older than `MEDIA_KEEP_DAYS` (14 by default), checking once an
+hour. Only the pictures go: the record of every switch, search and request is kept, so older days keep their numbers.
+The Mac keeps its own local copies for the "keep local days" setting, independently of this.
 
 ### Deploying the service
 

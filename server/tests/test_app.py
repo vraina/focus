@@ -96,7 +96,9 @@ def test_request_approved_for_a_while_without_emailing(ctx):
     assert r.status_code == 200
     a = r.json["answer"]
     assert a["decision"] == "approve_temporary" and a["minutes"] == 45  # capped at what was asked, not the model's 999
-    assert r.json["site"]["state"] == "distraction" and r.json["site"]["allowedUntil"] == a["allowedUntil"] > "2026"
+    # The window belongs to the child who asked ("sam"), not to everyone.
+    assert r.json["site"]["state"] == "distraction" and r.json["site"]["approvedFor"] == {"sam": a["allowedUntil"]}
+    assert a["allowedUntil"] > "2026" and "allowedUntil" not in r.json["site"]
     assert emails == []  # no email per request any more
     # The helper retrying the same request gets the same answer and the model is not asked twice.
     again = ask(client, "youtube.com", "Physics lecture for Thursday", minutes=45, id="req-1")
@@ -169,12 +171,12 @@ def test_parent_can_overrule(ctx):
 
     # Opening the link (as a mail scanner would) changes nothing.
     page = client.get(f"/decide?t={token}")
-    assert page.status_code == 200 and b"Physics lecture" in page.data and b"Approved until" in page.data
+    assert page.status_code == 200 and b"Physics lecture" in page.data and b"Approved for now: sam" in page.data
     assert db["sites"].find_one({"_id": "youtube.com"})["state"] == "distraction"
 
     assert client.post("/decide", data={"t": token, "a": "distraction"}).status_code == 200
     site = db["sites"].find_one({"_id": "youtube.com"})
-    assert site["state"] == "locked" and "allowedUntil" not in site  # the approval window is ended too
+    assert site["state"] == "locked" and "approvedFor" not in site  # the approval window is ended too
     # After that, requests are turned down without asking the model.
     assert ask(client, "youtube.com", "Physics lecture").json["answer"]["decision"] == "deny"
 
@@ -309,3 +311,85 @@ def test_sign_out_and_lockout(ctx):
         assert sign_in(client, password="guess").status_code == 401
     # After eight wrong tries even the right password has to wait.
     assert sign_in(client).status_code == 429
+
+
+# --- More than one child, more than one computer ------------------------------------------------
+
+def test_approvals_and_limits_are_per_child(ctx):
+    client, db, _, _, reviews = ctx
+    client.post("/api/classify", json={"host": "youtube.com"}, headers=AUTH)
+    ask(client, "youtube.com", "Physics lecture for Thursday", minutes=30, user="mia.k")
+    site = client.get("/api/sites", headers=AUTH).json["sites"][0]
+    assert list(site["approvedFor"]) == ["mia_k"]  # a dot cannot be part of a field name
+    # One child using up their requests for a site does not use up another child's.
+    for _ in range(5):
+        ask(client, "tiktok.com", "please", user="mia.k")
+    assert ask(client, "tiktok.com", "Physics lecture", user="mia.k").json["answer"]["decision"] == "deny"
+    assert ask(client, "tiktok.com", "Physics lecture", user="leo").json["answer"]["decision"] == "approve_temporary"
+    assert reviews[-1]["history"] == 0  # and leo is judged on his own history, not mia's
+
+
+def test_dashboard_filters_by_child_and_computer(ctx):
+    client, db, *_ = ctx
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    at = lambda m: now.replace(hour=9, minute=m, second=0).strftime("%Y-%m-%dT%H:%M:%SZ")
+    for sid, user, device, site, away in (("a", "mia", "Mia Air", "tiktok.com", 60.0), ("b", "mia", "Den iMac", "espn.com", 120.0),
+                                          ("c", "leo", "Leo Pro", "roblox.com", 300.0)):
+        db["sprintStarts"].insert_one({"_id": sid, "task": f"Work {sid}", "user": user, "device": device, "plannedSeconds": 600, "startedAt": at(0)})
+        db["sprintEnds"].insert_one({"_id": sid, "endedAt": at(10), "status": "completed", "awaySeconds": away, "switchCount": 1})
+        db["events"].insert_one({"_id": sid + "-e1", "sprintId": sid, "startedAt": at(1), "endedAt": at(2), "durationSeconds": away,
+                                 "appName": "Chrome", "host": site, "title": "", "category": "distraction", "media": []})
+    client.post("/api/search", json={"query": "NBA scores", "user": "leo", "device": "Leo Pro"}, headers=AUTH)
+    sign_in(client)
+    day = now.strftime("%Y-%m-%d")
+
+    everyone = client.get(f"/dashboard/day/{day}").get_data(as_text=True)
+    assert all(x in everyone for x in ("tiktok.com", "espn.com", "roblox.com", "NBA scores"))
+    assert "8m 00s" in everyone and "mia on Den iMac" in everyone  # 480s away in total; computers are named
+
+    mia = client.get(f"/dashboard/day/{day}?user=mia").get_data(as_text=True)
+    assert "tiktok.com" in mia and "espn.com" in mia and "roblox.com" not in mia and "NBA scores" not in mia
+    assert "3m 00s" in mia
+
+    den = client.get(f"/dashboard/day/{day}?user=mia&device=Den%20iMac").get_data(as_text=True)
+    assert "espn.com" in den and "tiktok.com" not in den and "2m 00s" in den
+
+    leo = client.get(f"/dashboard?user=leo").get_data(as_text=True)
+    assert "50%" in leo and "1 distraction search" in leo  # 300s away of 600s
+    assert "user=leo" in leo  # links to the days keep the filter
+
+
+def test_digest_has_a_section_per_child(ctx):
+    client, db, _, emails, _ = ctx
+    client.post("/api/search", json={"query": "NBA scores", "user": "leo", "device": "Leo Pro"}, headers=AUTH)
+    ask(client, "youtube.com", "Physics lecture", user="mia")
+    client.post("/api/digest", json={}, headers=AUTH)
+    body = emails[-1]["body"]
+    leo, mia = body.index(">leo</h2>"), body.index(">mia</h2>")
+    assert leo < body.index("NBA scores") < mia < body.index("Physics lecture")
+
+
+def test_old_pictures_are_removed_but_records_stay(ctx):
+    client, db, *_ = ctx
+    from datetime import timedelta
+    from app import create_app
+    old_day = datetime.now(timezone.utc) - timedelta(days=20)
+    old, recent = old_day.strftime("%Y%m%d") + "-101500-abc123", datetime.now(timezone.utc).strftime("%Y%m%d") + "-101500-def456"
+    for sid, when in ((old, old_day), (recent, datetime.now(timezone.utc))):
+        at = when.replace(hour=10, minute=15, second=0, microsecond=0).strftime("%Y-%m-%dT%H:%M:%SZ")
+        db["sprintStarts"].insert_one({"_id": sid, "task": "Essay", "user": "sam", "device": "Mac", "plannedSeconds": 600, "startedAt": at})
+        db["events"].insert_one({"_id": sid + "-e1", "sprintId": sid, "startedAt": at, "endedAt": at, "durationSeconds": 30.0,
+                                 "appName": "Chrome", "host": "espn.com", "title": "", "category": "distraction",
+                                 "media": [{"role": "start", "kind": "image", "file": "e1-start.jpg"}]})
+        db["media"].insert_one({"_id": f"{sid}/e1-start.jpg", "sprintId": sid, "file": "e1-start.jpg", "data": b"\xff\xd8x"})
+    db["media"].insert_one({"_id": "not-a-session/odd.jpg", "data": b"x"})  # anything unrecognised is left alone
+
+    app = create_app(db=db, classify=lambda *a: None, review=lambda *a: None, send_email=lambda *a: True, label_search=lambda *a: None)
+    assert app.media_keep_days == 14 and app.cleanup_media() == 1 and app.cleanup_media() == 0
+    assert db["media"].find_one({"_id": f"{old}/e1-start.jpg"}) is None
+    assert db["media"].find_one({"_id": f"{recent}/e1-start.jpg"}) and db["media"].find_one({"_id": "not-a-session/odd.jpg"})
+    assert db["events"].count_documents({}) == 2  # the record of the old switch is still there
+
+    sign_in(client)
+    page = client.get(f"/dashboard/day/{old_day.strftime('%Y-%m-%d')}").get_data(as_text=True)
+    assert "espn.com" in page and "Pictures are kept for 14 days" in page and "/dashboard/media/" not in page

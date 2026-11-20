@@ -26,10 +26,11 @@
 <div class="row">
   <div><h1>{{ title }}</h1><div class="muted">The whole day: sprints, and time outside them. Newest first.</div></div>
   <div class="spread row">
-    <a class="ghost" href="{{ url_for('day_view', day=previous) }}">‹ Earlier</a>
-    <a class="ghost {{ '' if following else 'off' }}" href="{{ url_for('day_view', day=following) if following else '#' }}">Later ›</a>
+    <a class="ghost" href="{{ url_for('day_view', day=previous, **q) }}">‹ Earlier</a>
+    <a class="ghost {{ '' if following else 'off' }}" href="{{ url_for('day_view', day=following, **q) if following else '#' }}">Later ›</a>
   </div>
 </div>
+{% include "_filter.html" %}
 
 <div class="tiles">
   <div class="card tile"><div class="k">Distracted</div><div class="v {{ totals.level }}">{{ totals.percent }}%</div></div>
@@ -61,7 +62,7 @@
   {% for x in searches %}
     <div class="row" style="margin-top:12px;align-items:flex-start">
       <div style="flex:1"><div style="font-weight:700">{{ x.text }}</div><div class="muted small">{{ x.reason }}{% if x.task %} · during: {{ x.task }}{% endif %}</div></div>
-      <div class="muted small num">{{ x.localTime }}</div>
+      <div class="muted small num">{{ x.localTime }}{% if several and x.who %}<br>{{ x.who }}{% endif %}</div>
     </div>
   {% endfor %}
   <p class="muted small" style="margin:12px 0 0">Only distraction searches are listed. Work searches are counted, and private topics are never recorded.</p>
@@ -83,12 +84,14 @@
 {% endif %}
 
 <h2>Every switch away</h2>
+{% if pictures_gone and switches %}<p class="muted small" style="margin:-4px 0 10px">Pictures are kept for {{ keep_days }} days, so this day is shown without them. Every switch is still listed.</p>{% endif %}
 <div class="stack">
 {% for e in switches %}
   <div class="card">
     <div class="row">
       <div style="flex:1;min-width:180px"><div style="font-weight:700;font-size:16px">{{ e.site }}</div>
-        <div class="muted small">{{ e.detail }}{% if e.during %}{{ ' · ' if e.detail }}during: {{ e.during }}{% endif %}</div></div>
+        <div class="muted small">{{ e.detail }}{% if e.during %}{{ ' · ' if e.detail }}during: {{ e.during }}{% endif %}</div>
+        {% if e.who %}<div class="small" style="margin-top:2px;font-weight:600">{{ e.who }}</div>{% endif %}</div>
       <span class="pill {{ 'bad' if e.category == 'distraction' else 'warn' }}">{{ 'Distraction' if e.category == 'distraction' else 'Off task' }}</span>
     </div>
     <div class="figs">

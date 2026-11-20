@@ -32,5 +32,7 @@ services:
         sync: false
       - key: TIMEZONE            # the family's time zone, decides when "end of day" is
         value: America/Los_Angeles
+      - key: MEDIA_KEEP_DAYS     # pictures and clips older than this are deleted from Atlas; the switch records stay
+        value: "14"
       - key: DIGEST_HOUR         # 24-hour clock: the daily summary goes out at 9 pm
         value: "21"

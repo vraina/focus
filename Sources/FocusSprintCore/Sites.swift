@@ -21,11 +21,20 @@ public struct SiteEntry: Codable, Sendable {
     public var updatedAt: String?
     /// End of an approved "needed for work" window (ISO 8601, UTC). Until then the site is not a distraction.
     public var allowedUntil: String? = nil
+    /// Approved windows per child, keyed by Mac login name. An approval one child earned does not
+    /// carry over to another child, on this Mac or any other.
+    public var approvedFor: [String: String]? = nil
     public var siteState: SiteState? { SiteState(rawValue: state) }
 
-    public func approved(at moment: Date = Date()) -> Bool {
-        guard let allowedUntil, let end = ISO8601DateFormatter().date(from: allowedUntil) else { return false }
-        return end > moment
+    /// The service stores login names with dots and dollar signs replaced, so look them up the same way.
+    public static func childKey(_ user: String) -> String {
+        let cleaned = String(user.trimmingCharacters(in: .whitespaces).map { ".$\0".contains($0) ? "_" : $0 }.prefix(60))
+        return cleaned.isEmpty ? "unknown" : cleaned
+    }
+
+    public func approved(at moment: Date = Date(), user: String = NSUserName()) -> Bool {
+        let stamps = [approvedFor?[SiteEntry.childKey(user)], allowedUntil].compactMap { $0 }
+        return stamps.contains { ISO8601DateFormatter().date(from: $0).map { $0 > moment } ?? false }
     }
     /// Not a distraction right now: labelled productive, allowed by the parent, or inside an approved window.
     public var cleared: Bool { siteState == .productive || siteState == .allowed || approved() }
