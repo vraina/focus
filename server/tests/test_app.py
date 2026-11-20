@@ -615,7 +615,8 @@ def test_filter_by_kid_and_computer(w):
     den_only = admin.get(day + f"?who={mia}&device=Den%20iMac%20%C2%B7%20kid").get_data(as_text=True)
     assert "espn.com" in den_only and "tiktok.com" not in den_only
     only_leo = admin.get(f"/dashboard?who={leo}").get_data(as_text=True)
-    assert "20%" in only_leo and "1 distraction search" in only_leo and f"who={leo}" in only_leo  # 300s away of 1500s
+    assert "20%" in only_leo and "1 distraction" in only_leo and f"who={leo}" in only_leo  # 300s away of 1500s
+    assert "roblox.com" in only_leo and "tiktok.com" not in only_leo  # the front page is today's activity for the person chosen
     assert "Nothing recorded" in admin.get(day + "?who=me").get_data(as_text=True) or "No switches" in admin.get(day + "?who=me").get_data(as_text=True)
 
 
@@ -804,19 +805,26 @@ def test_a_sprint_with_no_timer_is_shown_as_until_stopped(w):
     assert "Completed" in page and "until stopped" in page
 
 
-def test_the_overview_starts_on_the_first_recorded_day(w):
+def test_the_front_page_is_todays_activity_with_a_graph_since_the_first_record(w):
     admin = w.household("mum@example.com")
     mac = w.pair(admin, w.add_kid(admin, "Mia"), name="Mia's Mac")
     c = w.browser()
+    bars = lambda page: page.count('class="d ')
     page = admin.get("/dashboard").get_data(as_text=True)
-    assert "Nothing has been recorded yet" in page and page.count('class="card row"') == 1 and "Last 14 days" not in page
+    assert "Today" in page and "Nothing recorded yet" in page and bars(page) == 0 and "Timeline" not in page
+    assert ">Activity<" in page and ">Days<" not in page
     upload_sprint(c, mac, session_id(days_ago=2), days_ago=2)
+    upload_sprint(c, mac, session_id(tail="tod111"), site="espn.com", away=300.0)
     page = admin.get("/dashboard").get_data(as_text=True)
-    # Two days ago, yesterday and today: nothing from before the first record.
-    assert page.count('class="card row"') == 3 and "Since " in page and "Nothing has been recorded yet" not in page
-    upload_sprint(c, mac, session_id(days_ago=20, tail="old111"), days_ago=20)
+    # Two days ago, yesterday and today: nothing from before the first record. Today is open, with its timeline.
+    assert bars(page) == 3 and "Since " in page and "Timeline" in page and "espn.com" in page
+    assert "20% distracted" in page and "Nothing recorded" in page  # today's bar, and yesterday's empty one
+    assert 'href="#sw-' in page and 'id="sw-' in page  # a mark on the timeline jumps to its switch
+    older = admin.get(f"/dashboard/day/{(datetime.now(timezone.utc) - timedelta(days=2)).strftime('%Y-%m-%d')}").get_data(as_text=True)
+    assert bars(older) == 3 and ">Today</a>" in older  # an earlier day has the same graph and a way back
+    upload_sprint(c, mac, session_id(days_ago=40, tail="old111"), days_ago=40)
     page = admin.get("/dashboard").get_data(as_text=True)
-    assert page.count('class="card row"') == 14 and "Last 14 days" in page
+    assert bars(page) == 28 and "Last four weeks" in page
 
 
 def test_an_unexpected_failure_gets_a_plain_page_with_a_reference(w):

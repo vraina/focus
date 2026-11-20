@@ -6,36 +6,49 @@
 <meta name="robots" content="noindex">
 <title>{% block title %}YoungWonks Focus{% endblock %}</title>
 <style>
-:root{--brand:#5e57f0;--brand2:#29adda;--good:#21ad70;--warn:#f09921;--bad:#e6474d;--ink:#1a1b1f;--soft:#6b6f7a;
-  --canvas:#f4f5f7;--surface:#ffffff;--line:rgba(0,0,0,.08)}
-@media (prefers-color-scheme: dark){:root{--ink:#f2f3f5;--soft:#a0a4ae;--canvas:#17181c;--surface:#22242a;--line:rgba(255,255,255,.10)}}
+:root{--brand:#5e57f0;--brand2:#29adda;--good:#1f9d67;--warn:#d98312;--bad:#de3f46;--ink:#16171b;--soft:#676b76;--faint:#9a9eaa;
+  --canvas:#f6f7f9;--surface:#ffffff;--sunk:#f0f1f4;--line:rgba(18,20,28,.09);--line2:rgba(18,20,28,.05);--ring:rgba(94,87,240,.30);
+  --shadow:0 1px 2px rgba(18,20,28,.04),0 6px 20px -12px rgba(18,20,28,.14)}
+@media (prefers-color-scheme: dark){:root{--good:#35c283;--warn:#f0a23a;--bad:#f0666c;--ink:#f1f2f5;--soft:#a3a7b2;--faint:#70747f;
+  --canvas:#131418;--surface:#1c1e24;--sunk:#24262d;--line:rgba(255,255,255,.10);--line2:rgba(255,255,255,.06);--shadow:none}}
 *{box-sizing:border-box}
-body{margin:0;background:var(--canvas);color:var(--ink);font:15px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif}
-a{color:var(--brand);text-decoration:none}
-header.bar{background:var(--surface);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5}
-header.bar .in{max-width:980px;margin:0 auto;padding:10px 16px;display:flex;align-items:center;gap:18px}
-.logo{width:30px;height:30px;border-radius:8px;background:linear-gradient(135deg,var(--brand),var(--brand2));flex:none}
-.brand{font-weight:700;margin-right:auto;color:var(--ink)}
-nav a{color:var(--soft);font-weight:600;margin-left:14px} nav a.on{color:var(--brand)}
-.linkbtn{background:none;border:0;color:var(--soft);font:inherit;font-weight:600;cursor:pointer;margin-left:14px;padding:0}
-main{max-width:980px;margin:0 auto;padding:22px 16px 60px}
-h1{font-size:28px;margin:0 0 4px;letter-spacing:-.3px} h2{font-size:12px;letter-spacing:.6px;text-transform:uppercase;color:var(--soft);margin:26px 0 10px}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--canvas);color:var(--ink);font:15px/1.5 Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
+  -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+a{color:var(--brand);text-decoration:none} a:hover{text-decoration:underline} a.card:hover,a.chip:hover,a.ghost:hover,a.btn:hover,nav a:hover,a.brand:hover{text-decoration:none}
+:focus-visible{outline:2px solid var(--brand);outline-offset:2px;border-radius:6px}
+header.bar{background:color-mix(in srgb,var(--surface) 88%,transparent);backdrop-filter:saturate(1.4) blur(12px);-webkit-backdrop-filter:saturate(1.4) blur(12px);
+  border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5}
+header.bar .in{max-width:1080px;margin:0 auto;padding:10px 20px;display:flex;align-items:center;gap:14px}
+.logo{width:28px;height:28px;border-radius:8px;background:linear-gradient(135deg,var(--brand),var(--brand2));flex:none}
+.brand{font-weight:700;letter-spacing:-.2px;color:var(--ink);margin-right:8px;white-space:nowrap}
+header.bar nav{display:flex;flex-wrap:wrap;gap:2px;margin-right:auto}
+nav a{color:var(--soft);font-weight:600;font-size:14px;padding:6px 11px;border-radius:8px;transition:background .12s,color .12s}
+nav a:hover{background:var(--sunk);color:var(--ink)} nav a.on{background:color-mix(in srgb,var(--brand) 12%,transparent);color:var(--brand)}
+.linkbtn{background:none;border:0;color:var(--soft);font:inherit;font-size:14px;font-weight:600;cursor:pointer;padding:6px 10px;border-radius:8px}
+.linkbtn:hover{background:var(--sunk);color:var(--ink)}
+main{max-width:1080px;margin:0 auto;padding:28px 20px 72px}
+h1{font-size:28px;line-height:1.15;margin:0 0 6px;letter-spacing:-.6px;font-weight:750}
+h2{font-size:12px;letter-spacing:.7px;text-transform:uppercase;color:var(--soft);margin:32px 0 12px;font-weight:700}
 .muted{color:var(--soft)} .small{font-size:13px}
-.card{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:16px;box-shadow:0 2px 6px rgba(0,0,0,.04)}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:18px;box-shadow:var(--shadow)}
+a.card{transition:border-color .12s,transform .12s} a.card:hover{border-color:color-mix(in srgb,var(--brand) 35%,var(--line))}
 .tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-top:16px}
-.tile .k{font-size:12px;color:var(--soft);font-weight:600} .tile .v{font-size:28px;font-weight:700;font-variant-numeric:tabular-nums;margin-top:2px}
+.tile .k{font-size:12px;color:var(--soft);font-weight:600} .tile .v{font-size:28px;font-weight:750;letter-spacing:-.5px;font-variant-numeric:tabular-nums;margin-top:2px}
 .good{color:var(--good)} .warn{color:var(--warn)} .bad{color:var(--bad)}
-.pill{display:inline-block;font-size:11px;font-weight:700;padding:3px 9px;border-radius:99px;background:rgba(0,0,0,.07);color:var(--soft);white-space:nowrap}
-.pill.good{background:rgba(33,173,112,.14);color:var(--good)} .pill.warn{background:rgba(240,153,33,.16);color:var(--warn)}
-.pill.bad{background:rgba(230,71,77,.14);color:var(--bad)} .pill.brand{background:rgba(94,87,240,.13);color:var(--brand)}
+.pill{display:inline-block;font-size:11.5px;font-weight:700;padding:3px 9px;border-radius:99px;background:var(--sunk);color:var(--soft);white-space:nowrap}
+.pill.good{background:color-mix(in srgb,var(--good) 14%,transparent);color:var(--good)} .pill.warn{background:color-mix(in srgb,var(--warn) 16%,transparent);color:var(--warn)}
+.pill.bad{background:color-mix(in srgb,var(--bad) 13%,transparent);color:var(--bad)} .pill.brand{background:color-mix(in srgb,var(--brand) 12%,transparent);color:var(--brand)}
 .stack>*+*{margin-top:12px}
 .row{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
 .spread{margin-left:auto}
 .num{font-variant-numeric:tabular-nums;font-weight:700}
-.btn{display:inline-block;background:linear-gradient(135deg,var(--brand),var(--brand2));color:#fff;font-weight:700;border:0;border-radius:10px;padding:11px 16px;font-size:15px;cursor:pointer}
-.ghost{display:inline-block;border:1px solid var(--line);border-radius:9px;padding:7px 12px;color:var(--ink);font-weight:600;background:var(--surface)}
-.ghost.off{opacity:.35;pointer-events:none}
-.field{width:100%;padding:10px 12px;margin:4px 0 12px;border-radius:9px;border:1px solid var(--line);background:var(--canvas);color:var(--ink);font:inherit}
+.btn{display:inline-block;background:var(--brand);color:#fff;font-weight:650;border:0;border-radius:10px;padding:10px 16px;font-size:15px;cursor:pointer;
+  box-shadow:0 1px 2px rgba(94,87,240,.35);transition:filter .12s} .btn:hover{filter:brightness(1.07)}
+.ghost{display:inline-block;border:1px solid var(--line);border-radius:10px;padding:7px 12px;color:var(--ink);font-weight:600;font-size:14px;background:var(--surface);cursor:pointer;transition:background .12s}
+.ghost:hover{background:var(--sunk)} .ghost.off{opacity:.35;pointer-events:none}
+.field{width:100%;padding:10px 12px;margin:4px 0 12px;border-radius:10px;border:1px solid var(--line);background:var(--surface);color:var(--ink);font:inherit;transition:border-color .12s,box-shadow .12s}
+.field:focus{outline:0;border-color:var(--brand);box-shadow:0 0 0 3px var(--ring)}
 textarea.field{min-height:120px;font-family:ui-monospace,Menlo,monospace;font-size:13px}
 label{font-size:13px;color:var(--soft);font-weight:600}
 .pick{appearance:none;-webkit-appearance:none;border:1px solid transparent;border-radius:999px;padding:6px 28px 6px 12px;font:inherit;font-size:13px;font-weight:650;cursor:pointer;
@@ -45,10 +58,10 @@ label{font-size:13px;color:var(--soft);font-weight:600}
 .pick.work{color:#17895a;background-color:rgba(33,173,112,.13);border-color:rgba(33,173,112,.30);background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%2317895a' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")}
 .pick.neutral{color:#5a55e0;background-color:rgba(94,87,240,.11);border-color:rgba(94,87,240,.26);background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%235a55e0' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")}
 .narrow{max-width:400px;margin:7vh auto 0} .ok{color:var(--good);font-weight:600} .err{color:var(--bad);font-weight:600}
-.code{font:700 34px/1 ui-monospace,Menlo,monospace;letter-spacing:4px;padding:16px 20px;border-radius:12px;background:var(--canvas);display:inline-block}
-header.bar nav{display:flex;flex-wrap:wrap}
-.chip{display:inline-block;padding:6px 12px;border-radius:99px;background:var(--surface);border:1px solid var(--line);color:var(--ink);font-weight:600;font-size:13px}
-.chip.sub{font-weight:500;color:var(--soft)} .chip.on{background:var(--brand);border-color:var(--brand);color:#fff}
+.code{font:700 34px/1 ui-monospace,Menlo,monospace;letter-spacing:4px;padding:16px 20px;border-radius:12px;background:var(--sunk);display:inline-block}
+.chip{display:inline-block;padding:6px 13px;border-radius:99px;background:var(--surface);border:1px solid var(--line);color:var(--ink);font-weight:600;font-size:13px;transition:background .12s}
+.chip:hover{background:var(--sunk)} .chip.sub{font-weight:500;color:var(--soft)} .chip.on,.chip.on:hover{background:var(--brand);border-color:var(--brand);color:#fff}
+@media (max-width:640px){main{padding:20px 14px 56px} h1{font-size:24px} header.bar .in{padding:8px 14px}}
 </style>
 {% block head %}{% endblock %}
 </head>
@@ -58,7 +71,7 @@ header.bar nav{display:flex;flex-wrap:wrap}
 <header class="bar"><div class="in">
   <span class="logo"></span><a class="brand" href="{{ url_for('overview') }}">YoungWonks Focus</a>
   <nav>
-    <a href="{{ url_for('overview') }}" class="{{ 'on' if active == 'days' }}">Days</a>
+    <a href="{{ url_for('overview') }}" class="{{ 'on' if active == 'days' }}">Activity</a>
     <a href="{{ url_for('sites_view') }}" class="{{ 'on' if active == 'sites' }}">Websites</a>
     <a href="{{ url_for('apps_view') }}" class="{{ 'on' if active == 'apps' }}">Apps</a>
     {% if is_admin(me) %}<a href="{{ url_for('people') }}" class="{{ 'on' if active == 'people' }}">People</a>{% endif %}

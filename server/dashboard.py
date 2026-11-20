@@ -89,15 +89,17 @@ def register(app, svc, keep_days: int = 14):
             abort(404)
         return start, start.astimezone(timezone.utc).strftime(FMT), (start + timedelta(days=1)).astimezone(timezone.utc).strftime(FMT)
 
-    def sessions_between(lo: str, hi: str, view: dict) -> list[dict]:
-        """Every sprint and outside-sprint stretch that started in the window, with its switches and totals."""
+    def sessions_between(lo: str, hi: str, view: dict, light: bool = False) -> list[dict]:
+        """Every sprint and outside-sprint stretch that started in the window, with its switches and totals.
+        `light` reads only what totals need (for the four-week graph), not titles, addresses or pictures."""
         names = {m["_id"]: m.get("name", "") for m in request.visible}
         found = list(starts.find({"startedAt": {"$gte": lo, "$lt": hi}, **narrowed(view)}).sort("startedAt", -1))
         ids = [s["_id"] for s in found]
         own = {"memberId": {"$in": view["ids"]}}
         end_by_id = {e["_id"]: e for e in ends.find({"_id": {"$in": ids}, **own})}
         events_by_id: dict[str, list] = {}
-        for e in events.find({"sprintId": {"$in": ids}, **own}).sort("startedAt", -1):
+        fields = {"sprintId": 1, "startedAt": 1, "endedAt": 1, "durationSeconds": 1} if light else None
+        for e in events.find({"sprintId": {"$in": ids}, **own}, fields).sort("startedAt", -1):
             events_by_id.setdefault(e["sprintId"], []).append(e)
         out = []
         for s in found:
@@ -125,6 +127,8 @@ def register(app, svc, keep_days: int = 14):
                 "status": ("Completed" if end["status"] == "completed" else "Ended early") if end
                           else ("Interrupted" if not ambient and datetime.now(timezone.utc) > planned_end else "In progress"),
                 "open": not ambient and not s.get("plannedSeconds", 0),
+                # When it stopped on the clock, for the day's timeline.
+                "until": max(parse(end["endedAt"]) if end else last, parse(s["startedAt"])).strftime(FMT),
             })
         return out
 
@@ -138,35 +142,76 @@ def register(app, svc, keep_days: int = 14):
     @app.get("/dashboard")
     @signed_in
     def overview():
-        view = chosen()
+        """The front page: today's activity. (There used to be a separate list of days here.)"""
+        return day_view(datetime.now(zone()).strftime("%Y-%m-%d"))
+
+    def four_weeks(view: dict, selected: str) -> dict:
+        """Distraction day by day for the last four weeks, for the graph at the top of the activity page.
+        Days before anything was recorded are left out: the app was not installed then."""
         today = datetime.now(zone()).replace(hour=0, minute=0, second=0, microsecond=0)
-        first = today - timedelta(days=13)
-        sessions = sessions_between(first.astimezone(timezone.utc).strftime(FMT),
-                                    (today + timedelta(days=1)).astimezone(timezone.utc).strftime(FMT), view)
-        by_day: dict[str, list] = {}
-        for s in sessions:
-            by_day.setdefault(local(s["start"]).strftime("%Y-%m-%d"), []).append(s)
-        search_counts: dict[str, int] = {}
-        for x in db["searches"].find({"day": {"$gte": first.strftime("%Y-%m-%d")}, "label": "distraction", **narrowed(view)}, {"day": 1}):
-            search_counts[x["day"]] = search_counts.get(x["day"], 0) + 1
-        # Days from before anything was recorded for this selection are left out: the app was not installed
-        # then, so they could only ever say "nothing recorded".
+        first = today - timedelta(days=27)
         earliest = starts.find_one(narrowed(view), {"startedAt": 1}, sort=[("startedAt", 1)])
         began = local(earliest["startedAt"]).replace(hour=0, minute=0, second=0, microsecond=0) if earliest else today
-        span = max(1, min(14, (today - began).days + 1))
+        by_day: dict[str, list] = {}
+        for x in sessions_between(first.astimezone(timezone.utc).strftime(FMT),
+                                  (today + timedelta(days=1)).astimezone(timezone.utc).strftime(FMT), view, light=True):
+            by_day.setdefault(local(x["start"]).strftime("%Y-%m-%d"), []).append(x)
         days = []
-        for offset in range(span):
+        for offset in range(27, -1, -1):
             d = today - timedelta(days=offset)
+            if d < began:
+                continue
             key = d.strftime("%Y-%m-%d")
-            mine = by_day.get(key, [])
-            days.append({"key": key, "label": "Today" if offset == 0 else ("Yesterday" if offset == 1 else d.strftime("%A")),
-                         "date": d.strftime("%-d %B"), "totals": totals(mine),
-                         "sprints": sum(1 for s in mine if not s["ambient"]), "searches": search_counts.get(key, 0)})
-        return render_template("overview.html", days=days, view=view, recorded=earliest is not None,
-                               since=began.strftime("%-d %B") if span < 14 else "")
+            t = totals(by_day.get(key, []))
+            days.append({"key": key, "day": d.strftime("%-d"), "weekday": d.strftime("%a"), "month": d.strftime("%b"),
+                         "first_of_month": d.day == 1, "monday": d.weekday() == 0, "today": offset == 0,
+                         "selected": key == selected, "tracked": t["tracked"], "percent": t["percent"], "level": t["level"],
+                         "label": d.strftime("%A %-d %B"),
+                         "summary": (f"{t['percent']}% distracted · {duration(t['away'])} away of {duration(t['tracked'])}"
+                                     if t["tracked"] else "Nothing recorded")})
+        top = max([d["percent"] for d in days] + [10])
+        top = min(100, ((top + 9) // 10) * 10)  # the scale ends on a round number just above the worst day
+        for d in days:
+            d["height"] = round(d["percent"] / top * 100, 1) if d["tracked"] else 0
+        return {"days": days, "top": top, "recorded": earliest is not None, "since": began.strftime("%-d %B"),
+                "partial": len(days) < 28}
+
+    def day_timeline(sessions: list[dict], start: datetime) -> dict | None:
+        """The day as one strip: when the Mac was in use, where the sprints were, and every switch away."""
+        if not sessions:
+            return None
+        spans = [(local(x["start"]), local(x["until"]), x) for x in sessions]
+        lo = min(a for a, _, _ in spans).replace(minute=0, second=0, microsecond=0)
+        hi = max(b for _, b, _ in spans)
+        hi = (hi.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)) if hi > hi.replace(minute=0, second=0, microsecond=0) else hi
+        lo, hi = max(lo, start), min(max(hi, lo + timedelta(hours=1)), start + timedelta(days=1))
+        if hi - lo < timedelta(hours=4):  # a short day still gets a readable strip
+            hi = min(lo + timedelta(hours=4), start + timedelta(days=1))
+            lo = min(lo, hi - timedelta(hours=4))
+        total = (hi - lo).total_seconds()
+        place = lambda a, b, least=0.0: (round(max(0.0, (a - lo).total_seconds()) / total * 100, 3),
+                                         round(max(least, (min(b, hi) - max(a, lo)).total_seconds() / total * 100), 3))
+        bands, marks = [], []
+        for a, b, x in sorted(spans, key=lambda item: item[0]):
+            left, width = place(a, b, 0.3)
+            bands.append({"left": left, "width": width, "sprint": not x["ambient"],
+                          "label": (f"Sprint: {x['task']}" if not x["ambient"] else "Mac in use, outside sprints")
+                                   + f" · {a.strftime('%-I:%M %p')} to {b.strftime('%-I:%M %p')}"})
+            for e in x["events"]:
+                left, width = place(local(e["startedAt"]), local(e["endedAt"]), 0.35)
+                marks.append({"left": left, "width": width, "bad": e.get("category") == "distraction", "id": e["_id"],
+                              "label": f"{e.get('host') or e.get('appName', '')} · {clock(e['startedAt'])} · away {duration(e.get('durationSeconds', 0))}"})
+        hours = int(total // 3600)
+        step = 1 if hours <= 8 else (2 if hours <= 16 else 3)
+        ticks = [{"left": round(h / hours * 100, 3), "label": (lo + timedelta(hours=h)).strftime("%-I %p").lower()}
+                 for h in range(0, hours + 1, step)]
+        return {"bands": bands, "marks": marks, "ticks": ticks}
 
     @app.get("/dashboard/day/<day>")
     @signed_in
+    def day_page(day):
+        return day_view(day)
+
     def day_view(day):
         start, lo, hi = day_bounds(day)
         view = chosen()
@@ -194,8 +239,10 @@ def register(app, svc, keep_days: int = 14):
         requests_today = list(db["requests"].find({"day": day, **narrowed(view)}).sort([("at", -1), ("ts", -1)]))
         for r in requests_today:
             r["decisionLabel"] = DECISION_LABEL.get(r.get("decision"), "")
+        is_today = day == datetime.now(zone()).strftime("%Y-%m-%d")
         return render_template(
             "day.html", day=day, title=start.strftime("%A %-d %B %Y"), totals=totals(sessions), view=view, several=several,
+            is_today=is_today, weeks=four_weeks(view, day), timeline=day_timeline(sessions, start),
             pictures_gone=pictures_gone, keep_days=keep_days,
             previous=(start - timedelta(days=1)).strftime("%Y-%m-%d"),
             following=(start + timedelta(days=1)).strftime("%Y-%m-%d") if start + timedelta(days=1) <= datetime.now(zone()) else None,
