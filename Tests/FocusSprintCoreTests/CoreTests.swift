@@ -163,6 +163,29 @@ final class CoreTests: XCTestCase {
         XCTAssertNil(SiteRequest.app(bundleId: "com.ok.app", name: ""))
     }
 
+    func testASprintWithNoTimerRunsUntilStopped() {
+        let began = Date().addingTimeInterval(-3 * 3600) // three hours ago
+        let open = SprintStart(id: "s-open", device: "Mac", user: "sam", task: "Chemistry homework", plannedSeconds: 0, startedAt: began,
+                               allowedApps: [], allowedBundleIds: [], allowedDomains: [], captureMode: .screenshot)
+        let timed = SprintStart(id: "s-timed", device: "Mac", user: "sam", task: "Essay", plannedSeconds: 1500, startedAt: began,
+                                allowedApps: [], allowedBundleIds: [], allowedDomains: [], captureMode: .screenshot)
+        XCTAssertTrue(open.isOpenEnded)
+        XCTAssertFalse(timed.isOpenEnded)
+        let folder = URL(fileURLWithPath: "/tmp")
+        var record = SprintRecord(start: open, end: nil, events: [], directory: folder)
+        // Still running after three hours: not interrupted, however long it has been.
+        SprintRecord.runningId = "s-open"
+        XCTAssertFalse(record.interrupted)
+        // The app was quit without ending it: that is what interrupted means for a sprint with no timer.
+        SprintRecord.runningId = nil
+        XCTAssertTrue(record.interrupted)
+        // Ended by the person: complete, never interrupted.
+        record.end = SprintEnd(id: "s-open", endedAt: Date(), status: .completed, focusedSeconds: 10000, awaySeconds: 800, switchCount: 4)
+        XCTAssertFalse(record.interrupted)
+        // A timed sprint with no end record still goes by its planned time.
+        XCTAssertTrue(SprintRecord(start: timed, end: nil, events: [], directory: folder).interrupted)
+    }
+
     func testVersionsCompareAsNumbers() {
         XCTAssertTrue(AppVersion.isNewer("0.10.0", than: "0.9.2"))
         XCTAssertTrue(AppVersion.isNewer("v1.0", than: "0.9.9"))

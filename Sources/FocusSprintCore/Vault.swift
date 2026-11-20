@@ -148,8 +148,16 @@ public struct SprintRecord: Identifiable, Sendable {
     public var isAmbient: Bool { start.isAmbient }
 
     public var plannedEnd: Date { start.startedAt.addingTimeInterval(Double(start.plannedSeconds)) }
-    /// No end record and the planned time has passed: the app was quit or killed mid-sprint.
-    public var interrupted: Bool { !isAmbient && end == nil && Date() > plannedEnd.addingTimeInterval(15) }
+    /// The sprint the app is running right now, if any. An open-ended sprint has no planned end to go by, so
+    /// this is how "still going" is told apart from "the app was quit mid-sprint".
+    nonisolated(unsafe) public static var runningId: String?
+    /// No end record, and it is not the sprint running now: the app was quit or killed mid-sprint.
+    /// A timed sprint is only called interrupted once its planned time has passed.
+    public var interrupted: Bool {
+        guard !isAmbient, end == nil else { return false }
+        if start.isOpenEnded { return SprintRecord.runningId != start.id }
+        return Date() > plannedEnd.addingTimeInterval(15)
+    }
     public var awaySeconds: Double { merged?.away ?? end?.awaySeconds ?? events.reduce(0) { $0 + $1.durationSeconds } }
     public var elapsedSeconds: Double {
         if let merged { return max(1, merged.elapsed) }

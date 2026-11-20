@@ -784,3 +784,19 @@ def test_labels_can_be_changed_from_an_admins_or_adults_own_mac(w):
     assert change(mum_mac, "kids", "banana").status_code == 400 and change(mum_mac, "kids", "work", "com.not.seen").status_code == 404
     assert change(mum_mac, "mine", "work").status_code == 404  # her own list has no such app
     assert "Set in the app." in admin.get("/dashboard/apps").get_data(as_text=True)
+
+
+def test_a_sprint_with_no_timer_is_shown_as_until_stopped(w):
+    admin = w.household("mum@example.com")
+    mac = w.pair(admin, w.add_kid(admin, "Mia"), name="Mia's Mac")
+    c = w.browser()
+    sid = session_id()
+    start = {"_id": sid, "task": "Chemistry homework", "plannedSeconds": 0, "startedAt": stamp(), "allowedApps": [],
+             "allowedBundleIds": [], "allowedDomains": [], "captureMode": "screenshot"}
+    assert c.post(f"/api/upload/{sid}/start.json", json=start, headers=mac).status_code == 200
+    page = admin.get(f"/dashboard/day/{today()}").get_data(as_text=True)
+    assert "Chemistry homework" in page and "until stopped" in page and "0 min planned" not in page
+    end = {"_id": sid, "endedAt": stamp(hour=12), "status": "completed", "focusedSeconds": 6600.0, "awaySeconds": 600.0, "switchCount": 3}
+    assert c.post(f"/api/upload/{sid}/end.json", json=end, headers=mac).status_code == 200
+    page = admin.get(f"/dashboard/day/{today()}").get_data(as_text=True)
+    assert "Completed" in page and "until stopped" in page

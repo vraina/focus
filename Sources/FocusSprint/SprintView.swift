@@ -139,6 +139,11 @@ struct SprintView: View {
                     ForEach([15, 25, 45, 60], id: \.self) { value in
                         Chip(title: "\(value) min", selected: minutes == value) { minutes = value }
                     }
+                    Chip(title: "Until I stop", selected: minutes == 0) { minutes = 0 }
+                }
+                if minutes == 0 {
+                    Text("No timer. The sprint keeps going, and keeps noticing switches, until you end it.")
+                        .font(.system(size: 12)).foregroundStyle(.secondary)
                 }
             }
             .card()
@@ -186,7 +191,7 @@ struct SprintView: View {
                                    defaultApps: hasLabels ? defaults : nil)
                 picked = nil // the next sprint starts from the Work apps again
             } label: {
-                Label("Start \(minutes) minute sprint", systemImage: "play.fill")
+                Label(minutes == 0 ? "Start sprint" : "Start \(minutes) minute sprint", systemImage: "play.fill")
             }
             .buttonStyle(PrimaryButtonStyle())
             .keyboardShortcut(.defaultAction)
@@ -231,8 +236,8 @@ struct SprintView: View {
             ZStack {
                 Ring(progress: engine.sprintProgress, lineWidth: 16, tint: nil)
                 VStack(spacing: 2) {
-                    Text(SprintEngine.clock(engine.remaining)).font(Theme.number(68))
-                    Text("remaining").font(.system(size: 13)).foregroundStyle(.secondary)
+                    Text(SprintEngine.clock(engine.clockSeconds)).font(Theme.number(engine.clockSeconds >= 6000 ? 56 : 68))
+                    Text(engine.isOpenEnded ? "so far · until you stop" : "remaining").font(.system(size: 13)).foregroundStyle(.secondary)
                 }
             }
             .frame(width: 280, height: 280)
@@ -254,7 +259,7 @@ struct SprintView: View {
             }
             .padding(.top, 6)
 
-            Button("End sprint early") { engine.stopEarly() }
+            Button(engine.isOpenEnded ? "End sprint" : "End sprint early") { engine.stopEarly() }
                 .buttonStyle(.plain)
                 .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(Theme.bad)

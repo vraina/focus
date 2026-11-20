@@ -34,7 +34,7 @@ struct MeterView: View {
                     .frame(width: 40, height: 40)
                     VStack(alignment: .leading, spacing: 0) {
                         Text(engine.phase == .running ? "Sprint" : "Break").font(.system(size: 11, weight: .medium)).foregroundStyle(soft)
-                        Text(SprintEngine.clock(engine.remaining)).font(Theme.number(20)).foregroundStyle(ink)
+                        Text(SprintEngine.clock(engine.clockSeconds)).font(Theme.number(20)).foregroundStyle(ink)
                     }
                     Spacer(minLength: 0)
                 }

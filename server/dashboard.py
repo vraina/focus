@@ -112,7 +112,10 @@ def register(app, svc, keep_days: int = 14):
             else:
                 elapsed = (last - parse(s["startedAt"])).total_seconds()
             elapsed = max(1.0, float(elapsed))
-            planned_end = parse(s["startedAt"]) + timedelta(seconds=s.get("plannedSeconds", 0))
+            # A sprint started with "Until I stop" has no planned end. Without an end record it is taken to be
+            # still going while the Mac keeps sending switches, and to have been cut short once it has gone quiet.
+            planned_end = (parse(s["startedAt"]) + timedelta(seconds=s["plannedSeconds"]) if s.get("plannedSeconds")
+                           else max(last, parse(s["startedAt"])) + timedelta(hours=2))
             out.append({
                 "id": s["_id"], "task": s.get("task", ""), "ambient": ambient, "start": s["startedAt"],
                 "added": [str(x)[:80] for x in (s.get("addedApps") or [])][:30], "removed": [str(x)[:80] for x in (s.get("removedApps") or [])][:30],
@@ -121,6 +124,7 @@ def register(app, svc, keep_days: int = 14):
                 "focus": int(round(max(0.0, elapsed - away) / elapsed * 100)),
                 "status": ("Completed" if end["status"] == "completed" else "Ended early") if end
                           else ("Interrupted" if not ambient and datetime.now(timezone.utc) > planned_end else "In progress"),
+                "open": not ambient and not s.get("plannedSeconds", 0),
             })
         return out
 

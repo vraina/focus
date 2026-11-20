@@ -116,8 +116,14 @@ final class SprintEngine: ObservableObject {
     var sprintElapsed: Double { phase == .running ? Date().timeIntervalSince(start?.startedAt ?? Date()) : 0 }
     var sprintAway: Double { phase == .running ? closedAway + (open.map { Date().timeIntervalSince($0.startedAt) } ?? 0) : 0 }
     var sprintSwitches: Int { phase == .running ? switches : 0 }
+    /// True while a sprint started with "Until I stop" is running.
+    var isOpenEnded: Bool { phase == .running && start?.isOpenEnded == true }
+    /// What the big clock shows: time left, or for an open-ended sprint the time so far.
+    var clockSeconds: TimeInterval { isOpenEnded ? sprintElapsed : remaining }
     var sprintProgress: Double {
         guard phase == .running, let start else { return 0 }
+        // With no end to count towards, the ring goes round once an hour.
+        if start.isOpenEnded { return sprintElapsed.truncatingRemainder(dividingBy: 3600) / 3600 }
         return min(1, sprintElapsed / Double(max(1, start.plannedSeconds)))
     }
     var sprintDistraction: Double { sprintElapsed > 0 ? min(1, sprintAway / sprintElapsed) : 0 }
@@ -249,6 +255,7 @@ final class SprintEngine: ObservableObject {
 
     /// `defaultApps`: the bundle ids that were ticked to begin with (the person's Work apps). What the person
     /// ticked or unticked on top of that is written into the sprint's record.
+    /// `minutes` 0 means "Until I stop": the sprint has no planned end.
     func startSprint(task: String, minutes: Int, allowedApps: [AllowedApp], domains: [String], defaultApps: Set<String>? = nil) {
         guard phase != .running else { return }
         closeAmbient(quitting: false)
@@ -276,7 +283,8 @@ final class SprintEngine: ObservableObject {
                            distractionDomains: config.distractionDomains, distractionApps: config.distractionApps)
         rules?.appLabels = apps.labels
         start = sprint
-        endsAt = now.addingTimeInterval(Double(sprint.plannedSeconds))
+        endsAt = sprint.isOpenEnded ? .distantFuture : now.addingTimeInterval(Double(sprint.plannedSeconds))
+        SprintRecord.runningId = sprint.id
         closedAway = 0
         switches = 0
         open = nil
@@ -286,8 +294,9 @@ final class SprintEngine: ObservableObject {
     }
 
     func stopEarly() {
-        if phase == .running { finish(.endedEarly, quitting: false) }
-        if phase == .onBreak { phase = .idle }
+        // Stopping is how an open-ended sprint is meant to end, so that one counts as completed.
+        if phase == .running { finish(isOpenEnded ? .completed : .endedEarly, quitting: false) }
+        else if phase == .onBreak { phase = .idle }
     }
 
     /// Called from applicationWillTerminate: everything must be on disk before the process exits.
@@ -320,6 +329,7 @@ final class SprintEngine: ObservableObject {
         baseSwitches += switches
         phase = .idle
         start = nil
+        SprintRecord.runningId = nil
         rules = nil
         if !quitting {
             NSSound(named: "Glass")?.play()
@@ -333,7 +343,7 @@ final class SprintEngine: ObservableObject {
         timer = nil
     }
 
-    func setPreview(running: Bool, away: Bool, now: Date) {
+    func setPreview(running: Bool, away: Bool, now: Date, openEnded: Bool = false) {
         baseSprint = 3.2 * 3600; baseAway = 14 * 60; baseSwitches = 23
         open = nil
         if running {
@@ -341,6 +351,12 @@ final class SprintEngine: ObservableObject {
                                 plannedSeconds: 1500, startedAt: now.addingTimeInterval(-560), allowedApps: [],
                                 allowedBundleIds: [], allowedDomains: [], captureMode: .screenshot)
             endsAt = now.addingTimeInterval(940)
+            if openEnded { // a sprint with no timer, 47 minutes in
+                start?.plannedSeconds = 0
+                start?.task = "Chemistry homework"
+                start?.startedAt = now.addingTimeInterval(-47 * 60 - 12)
+                endsAt = .distantFuture
+            }
             closedAway = away ? 90 : 48
             switches = away ? 4 : 3
             awayNow = away ? ("espn.com", now.addingTimeInterval(-42), .distraction, "espn.com") : nil

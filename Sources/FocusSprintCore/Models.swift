@@ -59,6 +59,8 @@ public struct SprintStart: Codable, Identifiable, Sendable {
     public var addedApps: [String]?
     public var removedApps: [String]?
     public var isAmbient: Bool { kind == "ambient" }
+    /// A sprint started with "Until I stop": no planned length, it runs until the person ends it.
+    public var isOpenEnded: Bool { !isAmbient && plannedSeconds <= 0 }
 
     enum CodingKeys: String, CodingKey {
         case id = "_id", device, user, task, plannedSeconds, startedAt, allowedApps, allowedBundleIds, allowedDomains, captureMode, kind, addedApps, removedApps

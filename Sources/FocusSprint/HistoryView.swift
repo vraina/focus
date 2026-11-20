@@ -283,7 +283,7 @@ struct SprintDetail: View {
         if record.isAmbient {
             return "\(record.start.startedAt.formatted(date: .complete, time: .omitted)) · the whole day: sprints, and time outside them"
         }
-        let base = "\(record.start.startedAt.formatted(date: .complete, time: .shortened)) · \(record.start.plannedSeconds / 60) min planned · \(record.start.user) on \(record.start.device)"
+        let base = "\(record.start.startedAt.formatted(date: .complete, time: .shortened)) · \(record.start.isOpenEnded ? "until stopped" : "\(record.start.plannedSeconds / 60) min planned") · \(record.start.user) on \(record.start.device)"
         return record.interrupted ? base + " · the app was quit mid-sprint" : base
     }
 }

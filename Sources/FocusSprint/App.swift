@@ -75,7 +75,7 @@ struct FocusSprintApp: App {
             if engine.phase == .idle {
                 Image(systemName: "timer")
             } else {
-                Text((engine.phase == .onBreak ? "Break " : "") + SprintEngine.clock(engine.remaining)).monospacedDigit()
+                Text((engine.phase == .onBreak ? "Break " : "") + SprintEngine.clock(engine.clockSeconds)).monospacedDigit()
             }
         }
     }
