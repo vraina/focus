@@ -155,6 +155,10 @@ def parse_settings(form) -> dict:
             "distractionDomains": domains, "distractionApps": lines("apps", 100)}
 
 
+class StaleForm(Exception):
+    """A form was submitted without the matching token."""
+
+
 def register(app, svc):
     db = svc.db
     families, devices, accounts, members = db["families"], db["devices"], db["accounts"], db["members"]
@@ -172,8 +176,21 @@ def register(app, svc):
         return session["csrf"]
 
     def check_csrf():
+        """Every form carries a token that must match the one in the visitor's cookie. When it does not (the page
+        sat open past the cookie's life, or the browser did not keep the cookie) the person gets the form back
+        with an explanation, not a bare error page. Nothing they submitted is acted on."""
         if not hmac.compare_digest(request.form.get("csrf", ""), session.get("csrf", "x")):
-            abort(400)
+            raise StaleForm()
+
+    @app.errorhandler(StaleForm)
+    def stale_form(_error):
+        rule = app.url_map._rules_by_endpoint.get(request.endpoint or "", [None])[0]
+        if rule is None or "GET" not in (rule.methods or ()):
+            return redirect("/dashboard?again=1", code=303)
+        keep = {k: v for k, v in request.args.items() if k in ("invite", "t")}
+        if request.form.get("invite"):
+            keep["invite"] = re.sub(r"[^A-Za-z0-9]", "", request.form["invite"])[:20]
+        return redirect(url_for(request.endpoint, **(request.view_args or {}), **keep, again=1), code=303)
 
     def current_account() -> dict | None:
         aid = session.get("aid")

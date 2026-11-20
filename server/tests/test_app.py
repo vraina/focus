@@ -185,7 +185,8 @@ def test_sign_in_sign_out_and_lockout(w):
     client.post("/logout", data={"csrf": w.csrf(client, "/dashboard")})
     assert client.get("/dashboard").status_code == 302
     # A sign-in form posted without the page's token is refused.
-    assert w.browser().post("/login", data={"email": OWNER, "password": "owner-password-1"}).status_code == 400
+    refused = w.browser().post("/login", data={"email": OWNER, "password": "owner-password-1"})
+    assert refused.status_code == 303 and "again=1" in refused.headers["Location"] and "Set-Cookie" not in refused.headers
     guesser = w.browser()
     for _ in range(8):
         assert w.sign_in(password="guess", client=guesser)[1].status_code == 401
@@ -295,7 +296,7 @@ def test_co_admin_rights(w):
     admin.post("/dashboard/people", data={**form, "csrf": w.csrf(admin, "/dashboard/people"), "account": mum})
     assert w.db["accounts"].find_one({"_id": mum})["role"] == "admin"
     # A member invitation is for one household only and works once.
-    assert w.browser().post("/signup", data={"csrf": "", "invite": code}).status_code == 400
+    assert w.browser().post("/signup", data={"csrf": "", "invite": code}).status_code == 303  # sent back to the form; nothing created
 
 
 # --- One Mac, several logins ------------------------------------------------------------------------
@@ -658,3 +659,25 @@ def test_versions_and_the_installer_link(w):
     assert "version 0.10.0" in page and "pending" not in page
     anyone.get("/api/config", headers={**mac, "X-App-Version": "<b>1</b>"})  # nonsense is ignored
     assert w.db["devices"].find_one({"name": "Mia's Mac"})["appVersion"] == "0.10.0"
+
+
+def test_a_form_without_its_cookie_comes_back_with_an_explanation(w):
+    code = w.invite()
+    first = w.browser()
+    token = w.csrf(first, "/signup")
+    # Another browser (or the same one having lost its cookie) submits the form: no bare error page.
+    stranger = w.browser()
+    reply = stranger.post(f"/signup?invite={code}", data={"csrf": token, "invite": code, "name": "Pat", "email": "pat@example.com",
+                                                          "password": "family-password-1"})
+    assert reply.status_code == 303 and f"invite={code}" in reply.headers["Location"] and "again=1" in reply.headers["Location"]
+    page = stranger.get(reply.headers["Location"]).get_data(as_text=True)
+    assert "Nothing was saved" in page and f'value="{code}"' in page
+    assert w.db["accounts"].find_one({"email": "pat@example.com"}) is None and w.db["invites"].find_one({"_id": code})["usedBy"] is None
+    # Trying again from the page they were sent back to works.
+    again = stranger.post("/signup", data={"csrf": w.csrf(stranger, "/signup"), "invite": code, "name": "Pat",
+                                           "email": "pat@example.com", "password": "family-password-1"})
+    assert again.status_code == 302 and w.db["accounts"].find_one({"email": "pat@example.com"})
+    # A signed-in action with a bad token is refused too, and lands back on the website.
+    admin, _ = w.sign_in()
+    refused = admin.post("/dashboard/computers/code", data={"csrf": "wrong", "member": "x"})
+    assert refused.status_code == 303 and refused.headers["Location"].endswith("/dashboard?again=1")
