@@ -641,7 +641,9 @@ def test_earlier_data_becomes_the_owners_own(w):
     w.db["media"].insert_one({"_id": "20260101-100000-legacy/e1-start.jpg", "data": b"x"})
     w.db["sites"].insert_one({"_id": "youtube.com", "state": "distraction", "source": "ai", "reason": "Video.", "allowedUntil": "x"})
     w.db["sites"].insert_one({"_id": "espn.com", "state": "locked", "source": "parent"})
+    w.db["meta"].delete_many({})  # as on a service holding records from before accounts existed: the move has not run yet
     w.build()  # the service starting again
+    w.build()  # and again: the move runs once, and a later start changes nothing
     owner = w.db["accounts"].find_one({"email": OWNER})
     assert owner["role"] == "admin" and owner["verified"] and w.db["families"].find_one({"_id": owner["familyId"]})["serviceOwner"]
     assert w.db["sprintStarts"].find_one({"_id": "20260101-100000-legacy"})["memberId"] == owner["memberId"]
@@ -800,3 +802,27 @@ def test_a_sprint_with_no_timer_is_shown_as_until_stopped(w):
     assert c.post(f"/api/upload/{sid}/end.json", json=end, headers=mac).status_code == 200
     page = admin.get(f"/dashboard/day/{today()}").get_data(as_text=True)
     assert "Completed" in page and "until stopped" in page
+
+
+def test_the_overview_starts_on_the_first_recorded_day(w):
+    admin = w.household("mum@example.com")
+    mac = w.pair(admin, w.add_kid(admin, "Mia"), name="Mia's Mac")
+    c = w.browser()
+    page = admin.get("/dashboard").get_data(as_text=True)
+    assert "Nothing has been recorded yet" in page and page.count('class="card row"') == 1 and "Last 14 days" not in page
+    upload_sprint(c, mac, session_id(days_ago=2), days_ago=2)
+    page = admin.get("/dashboard").get_data(as_text=True)
+    # Two days ago, yesterday and today: nothing from before the first record.
+    assert page.count('class="card row"') == 3 and "Since " in page and "Nothing has been recorded yet" not in page
+    upload_sprint(c, mac, session_id(days_ago=20, tail="old111"), days_ago=20)
+    page = admin.get("/dashboard").get_data(as_text=True)
+    assert page.count('class="card row"') == 14 and "Last 14 days" in page
+
+
+def test_an_unexpected_failure_gets_a_plain_page_with_a_reference(w):
+    admin = w.household("mum@example.com")
+    w.app.config["PROPAGATE_EXCEPTIONS"] = False
+    w.db["sprintStarts"].insert_one({"_id": "broken", "familyId": w.db["accounts"].find_one({"email": "mum@example.com"})["familyId"],
+                                     "memberId": w.me("mum@example.com"), "startedAt": "not a date"})
+    reply = admin.get("/dashboard?who=me")
+    assert reply.status_code == 500 and "Something went wrong on our side" in reply.get_data(as_text=True)

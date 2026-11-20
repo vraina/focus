@@ -149,15 +149,21 @@ def register(app, svc, keep_days: int = 14):
         search_counts: dict[str, int] = {}
         for x in db["searches"].find({"day": {"$gte": first.strftime("%Y-%m-%d")}, "label": "distraction", **narrowed(view)}, {"day": 1}):
             search_counts[x["day"]] = search_counts.get(x["day"], 0) + 1
+        # Days from before anything was recorded for this selection are left out: the app was not installed
+        # then, so they could only ever say "nothing recorded".
+        earliest = starts.find_one(narrowed(view), {"startedAt": 1}, sort=[("startedAt", 1)])
+        began = local(earliest["startedAt"]).replace(hour=0, minute=0, second=0, microsecond=0) if earliest else today
+        span = max(1, min(14, (today - began).days + 1))
         days = []
-        for offset in range(14):
+        for offset in range(span):
             d = today - timedelta(days=offset)
             key = d.strftime("%Y-%m-%d")
             mine = by_day.get(key, [])
             days.append({"key": key, "label": "Today" if offset == 0 else ("Yesterday" if offset == 1 else d.strftime("%A")),
                          "date": d.strftime("%-d %B"), "totals": totals(mine),
                          "sprints": sum(1 for s in mine if not s["ambient"]), "searches": search_counts.get(key, 0)})
-        return render_template("overview.html", days=days, view=view)
+        return render_template("overview.html", days=days, view=view, recorded=earliest is not None,
+                               since=began.strftime("%-d %B") if span < 14 else "")
 
     @app.get("/dashboard/day/<day>")
     @signed_in

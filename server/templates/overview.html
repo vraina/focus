@@ -2,9 +2,10 @@
 {% set active = 'days' %}
 {% block title %}Days · YoungWonks Focus{% endblock %}
 {% block body %}
-<h1>Last 14 days</h1>
+<h1>{{ 'Last 14 days' if not since else ('Today' if days|length == 1 else 'Since ' + since) }}</h1>
 <p class="muted">Tracked time is sprint time plus the time the Mac was in use outside sprints.</p>
 {% include "_filter.html" %}
+{% if not recorded %}<div class="card muted" style="margin-top:18px">Nothing has been recorded yet. Days appear here from the first day a linked Mac is used.</div>{% endif %}
 <div class="stack" style="margin-top:18px">
 {% for d in days %}
   <a class="card row" href="{{ url_for('day_view', day=d.key, **view.args) }}" style="color:inherit">

@@ -22,6 +22,8 @@ from flask import abort, redirect, render_template, request, session, url_for
 from itsdangerous import BadSignature, SignatureExpired
 from werkzeug.security import check_password_hash, generate_password_hash
 
+from pymongo.errors import DuplicateKeyError
+
 import mailer
 import releases
 
@@ -107,11 +109,22 @@ def bootstrap_owner(svc):
         return
     account = db["accounts"].find_one({"email": email})
     if account is None:
-        account = new_household(db, svc.default_zone, email, password, "Me", verified=True, owner=True)
-        log.info("created the owner's household")
+        try:
+            account = new_household(db, svc.default_zone, email, password, "Me", verified=True, owner=True)
+            log.info("created the owner's household")
+        except DuplicateKeyError:
+            # The service runs as several worker processes that start together; another one got there first.
+            account = db["accounts"].find_one({"email": email})
+            if account is None:
+                raise
     else:
         db["families"].update_one({"_id": account["familyId"]}, {"$set": {"serviceOwner": True}})
     fid, mid = account["familyId"], account["memberId"]
+    # The move below is a one-time job. It reads through every stored record and picture to find ones from
+    # before accounts existed, which is slow once there are many pictures; doing it on every start made each
+    # restart of the service slower for no benefit.
+    if db["meta"].find_one({"_id": "legacyMoved"}):
+        return
     moved = 0
     # Earlier records came from the owner's own Mac, so they become the owner's own, private, records.
     for name in ("sprintStarts", "sprintEnds", "events", "media", "requests", "searches"):
@@ -132,6 +145,7 @@ def bootstrap_owner(svc):
         moved += 1
     if moved:
         log.info("moved %d earlier record(s) into the owner's own profile", moved)
+    db["meta"].update_one({"_id": "legacyMoved"}, {"$set": {"at": utcnow(), "moved": moved}}, upsert=True)
 
 
 def parse_settings(form) -> dict:
@@ -182,6 +196,15 @@ def register(app, svc):
         expected = session.get("csrf", "")
         if not expected or not hmac.compare_digest(request.form.get("csrf", ""), expected):
             raise StaleForm()
+
+    @app.errorhandler(500)
+    def went_wrong(error):
+        """An unexpected failure: say so plainly, with a reference that is also in the service's log."""
+        ref = secrets.token_hex(4)
+        log.error("unexpected error %s on %s %s: %r", ref, request.method, request.path, getattr(error, "original_exception", error))
+        if request.path.startswith("/api/"):
+            return {"error": "unexpected error", "ref": ref}, 500
+        return render_template("error.html", ref=ref), 500
 
     @app.errorhandler(StaleForm)
     def stale_form(_error):
