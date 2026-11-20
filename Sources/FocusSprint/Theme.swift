@@ -72,10 +72,11 @@ struct Ring: View {
         ZStack {
             Circle().stroke(Color.primary.opacity(0.08), lineWidth: lineWidth)
             Circle()
-                .trim(from: 0, to: max(0.001, min(1, progress)))
+                .trim(from: 0, to: max(0, min(1, progress)))
                 .stroke(tint.map { AnyShapeStyle($0) } ?? AnyShapeStyle(Theme.gradient),
                         style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
                 .rotationEffect(.degrees(-90))
+                .opacity(progress > 0 ? 1 : 0) // no stray dot on an empty ring
         }
     }
 }

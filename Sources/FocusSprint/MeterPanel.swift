@@ -4,62 +4,46 @@ import SwiftUI
 import FocusSprintCore
 
 /// The always-on-top gauge: sprint progress, distraction in this sprint, distraction for the day.
+/// While the student is on a distraction the whole card turns red.
 struct MeterView: View {
     @ObservedObject var engine: SprintEngine
 
     var body: some View {
         let away = engine.awayNow
+        let alert = away != nil
+        let ink: Color = alert ? .white : .primary
+        let soft: Color = alert ? .white.opacity(0.82) : .secondary
         VStack(alignment: .leading, spacing: 11) {
             if let away {
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 11, weight: .bold))
-                        Text(away.label).font(.system(size: 12, weight: .bold)).lineLimit(1)
-                        Spacer(minLength: 4)
-                        Text(SprintEngine.clock(Date().timeIntervalSince(away.since))).font(Theme.number(12))
-                    }
-                    .foregroundStyle(.white)
-                    if let host = away.host, away.category == .distraction {
-                        switch engine.disputeOption(for: host) {
-                        case .available:
-                            Button { DisputePrompt.ask(host: host, engine: engine) } label: {
-                                Text("Needed for work")
-                                    .font(.system(size: 11, weight: .semibold))
-                                    .foregroundStyle(Theme.bad)
-                                    .frame(maxWidth: .infinity)
-                                    .padding(.vertical, 5)
-                                    .background(.white, in: Capsule())
-                            }
-                            .buttonStyle(.plain)
-                        case .sent:
-                            Label("Checking your request…", systemImage: "hourglass")
-                                .font(.system(size: 11, weight: .medium)).foregroundStyle(.white.opacity(0.9))
-                        case .closed:
-                            EmptyView()
-                        }
-                    }
+                HStack(spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 12, weight: .bold))
+                    Text(away.label).font(.system(size: 14, weight: .bold)).lineLimit(1)
+                    Spacer(minLength: 4)
+                    Text(SprintEngine.clock(Date().timeIntervalSince(away.since))).font(Theme.number(14))
                 }
-                .padding(10)
-                .background(Theme.bad, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+                .foregroundStyle(.white)
             }
 
-            HStack(spacing: 11) {
-                ZStack {
-                    Ring(progress: engine.sprintProgress, lineWidth: 5, tint: nil)
-                    Image(systemName: engine.phase == .onBreak ? "cup.and.saucer.fill" : "timer")
-                        .font(.system(size: 12, weight: .semibold)).foregroundStyle(.secondary)
+            if engine.phase != .idle {
+                HStack(spacing: 11) {
+                    ZStack {
+                        Ring(progress: engine.sprintProgress, lineWidth: 5, tint: alert ? .white : nil)
+                        Image(systemName: engine.phase == .onBreak ? "cup.and.saucer.fill" : "timer")
+                            .font(.system(size: 12, weight: .semibold)).foregroundStyle(soft)
+                    }
+                    .frame(width: 40, height: 40)
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text(engine.phase == .running ? "Sprint" : "Break").font(.system(size: 11, weight: .medium)).foregroundStyle(soft)
+                        Text(SprintEngine.clock(engine.remaining)).font(Theme.number(20)).foregroundStyle(ink)
+                    }
+                    Spacer(minLength: 0)
                 }
-                .frame(width: 40, height: 40)
-                VStack(alignment: .leading, spacing: 0) {
-                    Text(engine.phase == .running ? "Sprint" : (engine.phase == .onBreak ? "Break" : "No sprint running"))
-                        .font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
-                    Text(engine.phase == .idle ? "—" : SprintEngine.clock(engine.remaining)).font(Theme.number(20))
-                }
-                Spacer(minLength: 0)
             }
 
-            bar(title: "This sprint", value: engine.phase == .running ? engine.sprintDistraction : nil)
-            bar(title: "Today", value: engine.todayDistraction)
+            if engine.phase == .running {
+                bar(title: "This sprint", value: engine.sprintDistraction, alert: alert)
+            }
+            bar(title: "Today", value: engine.todayDistraction, alert: alert)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text("\(engine.todaySwitches) switches · \(Format.duration(engine.todayAway)) of \(Format.duration(engine.todaySprintSeconds))")
@@ -70,30 +54,52 @@ struct MeterView: View {
                     Text("Searches: \(engine.searchCounts.work) work · \(engine.searchCounts.distraction) distraction")
                 }
             }
-            .font(.system(size: 10)).foregroundStyle(.secondary)
+            .font(.system(size: 10)).foregroundStyle(soft)
+
+            // Deliberately quiet: available when it is true, but not the thing the card invites you to press.
+            if let away, let host = away.host, away.category == .distraction {
+                switch engine.disputeOption(for: host) {
+                case .available:
+                    Button { DisputePrompt.ask(host: host, engine: engine) } label: {
+                        Text("Needed for work?").font(.system(size: 10, weight: .medium)).underline()
+                            .foregroundStyle(.white.opacity(0.85))
+                    }
+                    .buttonStyle(.plain)
+                case .sent:
+                    Label("Checking your request…", systemImage: "hourglass")
+                        .font(.system(size: 10, weight: .medium)).foregroundStyle(.white.opacity(0.85))
+                case .closed:
+                    EmptyView()
+                }
+            }
         }
         .padding(13)
         .frame(width: 244)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .background {
+            if alert {
+                RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Theme.bad)
+            } else {
+                RoundedRectangle(cornerRadius: 18, style: .continuous).fill(.regularMaterial)
+            }
+        }
         .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous)
-            .strokeBorder(away != nil ? Theme.bad.opacity(0.8) : Color.primary.opacity(0.12), lineWidth: away != nil ? 1.5 : 1))
+            .strokeBorder(alert ? Color.white.opacity(0.25) : Color.primary.opacity(0.12), lineWidth: 1))
     }
 
-    /// One distraction meter. `nil` means "not applicable right now".
-    private func bar(title: String, value: Double?) -> some View {
+    private func bar(title: String, value: Double, alert: Bool) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
-                Text(title).font(.system(size: 11, weight: .medium))
-                Text("distraction").font(.system(size: 11)).foregroundStyle(.secondary)
+                Text(title).font(.system(size: 11, weight: .medium)).foregroundStyle(alert ? .white : .primary)
+                Text("distraction").font(.system(size: 11)).foregroundStyle(alert ? .white.opacity(0.82) : .secondary)
                 Spacer()
-                Text(value.map { "\(Int(($0 * 100).rounded()))%" } ?? "—")
-                    .font(Theme.number(13)).foregroundStyle(value.map(levelColor) ?? .secondary)
+                Text("\(Int((value * 100).rounded()))%")
+                    .font(Theme.number(13)).foregroundStyle(alert ? .white : levelColor(value))
             }
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
-                    Capsule().fill(Color.primary.opacity(0.10))
-                    Capsule().fill(levelColor(value ?? 0))
-                        .frame(width: max((value ?? 0) > 0 ? 5 : 0, geo.size.width * (value ?? 0)))
+                    Capsule().fill(alert ? Color.white.opacity(0.25) : Color.primary.opacity(0.10))
+                    Capsule().fill(alert ? Color.white : levelColor(value))
+                        .frame(width: max(value > 0 ? 5 : 0, geo.size.width * value))
                 }
             }
             .frame(height: 5)

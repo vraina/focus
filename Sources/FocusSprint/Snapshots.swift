@@ -36,7 +36,11 @@ enum Snapshots {
             Shot(name: "5-parent-locked", size: window, view: { app(.parent) }),
             Shot(name: "6-widget-away", size: CGSize(width: 304, height: 300), prepare: { engine.debugPreview("away") },
                  view: { padded(MeterView(engine: engine)) }),
-            Shot(name: "7-widget-calm", size: CGSize(width: 304, height: 230), prepare: { engine.debugPreview("idle") },
+            Shot(name: "7-widget-calm", size: CGSize(width: 304, height: 180), prepare: { engine.debugPreview("idle") },
+                 view: { padded(MeterView(engine: engine)) }),
+            Shot(name: "7b-widget-away-no-sprint", size: CGSize(width: 304, height: 220), prepare: { engine.debugPreview("away-idle") },
+                 view: { padded(MeterView(engine: engine)) }),
+            Shot(name: "7c-widget-sprint-calm", size: CGSize(width: 304, height: 260), prepare: { engine.debugPreview("running") },
                  view: { padded(MeterView(engine: engine)) }),
             Shot(name: "8-dialog-request", size: CGSize(width: 500, height: 470),
                  view: { padded(RequestDialog(host: "youtube.com", onSend: { _, _, _ in }, onCancel: {})) }),
@@ -110,7 +114,7 @@ extension SprintEngine {
     func debugPreview(_ mode: String) {
         stopTimerForPreview()
         let now = Date()
-        setPreview(running: mode != "idle", away: mode == "away", now: now)
+        setPreview(running: mode == "running" || mode == "away", away: mode.hasPrefix("away"), now: now)
     }
 }
 #endif

@@ -308,7 +308,7 @@ final class SprintEngine: ObservableObject {
             phase = .running
         } else {
             start = nil
-            awayNow = nil
+            awayNow = away ? ("rediff.com", now.addingTimeInterval(-8), .distraction, "rediff.com") : nil
             phase = .idle
             lastSummary = SprintSummary(task: "Algebra homework, chapter 4", status: .completed, focusPercent: 92,
                                         switches: 3, awaySeconds: 118)
