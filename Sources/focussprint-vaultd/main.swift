@@ -84,6 +84,22 @@ struct LoginState {
     var checked = false
 }
 
+nonisolated(unsafe) var lastReport = Date.distantPast
+
+/// Writes what the app shows for the login being worked on: linked or not, whose it is, how much is waiting.
+func report(_ state: LoginState, _ vault: Vault) {
+    var status = HelperStatus(linked: SiteSync.config() != nil, account: state.identity?.account, memberName: state.identity?.member,
+                              memberKind: state.identity?.kind, deviceName: state.identity?.device,
+                              linkProblem: state.linkProblem, pending: vault.pendingItems().count,
+                              lastUploadAt: state.lastUploadAt, lastError: state.lastError)
+    status.profiles = state.identity?.member.isEmpty == true ? state.identity?.profiles : nil
+    if let data = try? JSONCoding.encoder.encode(status) {
+        try? data.write(to: Paths.status, options: .atomic)
+        chmod(Paths.status.path, 0o644)
+    }
+    lastReport = Date()
+}
+
 Task {
     var pass = 0
     var states: [uid_t: LoginState] = [:]
@@ -127,6 +143,9 @@ Task {
                                 vault.markUploaded(item)
                                 state.lastUploadAt = Date()
                                 state.lastError = nil
+                                // A long queue (the first upload after linking) takes minutes. Keep telling the app
+                                // the helper is alive and how much is left, or it would report the helper as gone.
+                                if Date().timeIntervalSince(lastReport) > 5 { report(state, vault) }
                             }
                         }
                     }
@@ -146,19 +165,7 @@ Task {
                 state = LoginState() // the computer is not linked: everything simply stays queued
             }
 
-            if pass % 4 == 0 || gotRequests {
-                let linked = (service ?? SiteSync.config()) != nil
-                let status = HelperStatus(linked: linked, account: state.identity?.account, memberName: state.identity?.member,
-                                          memberKind: state.identity?.kind, deviceName: state.identity?.device,
-                                          linkProblem: state.linkProblem, pending: vault.pendingItems().count,
-                                          lastUploadAt: state.lastUploadAt, lastError: state.lastError)
-                var full = status
-                full.profiles = state.identity?.member.isEmpty == true ? state.identity?.profiles : nil
-                if let data = try? JSONCoding.encoder.encode(full) {
-                    try? data.write(to: Paths.status, options: .atomic)
-                    chmod(Paths.status.path, 0o644)
-                }
-            }
+            if pass % 4 == 0 || gotRequests { report(state, vault) }
             if pass % 7200 == 0 { vault.prune(keepDays: ParentConfig.load().keepLocalDays) }
             states[uid] = state
         }

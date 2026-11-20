@@ -140,6 +140,7 @@ public struct HelperStatus: Codable, Sendable {
         return try? JSONCoding.decoder.decode(HelperStatus.self, from: data)
     }
 
-    /// The helper rewrites its status every few seconds; a stale file means it is not running.
-    public var isFresh: Bool { Date().timeIntervalSince(updatedAt) < 30 }
+    /// The helper rewrites its status every few seconds; a stale file means it is not running. The margin
+    /// covers one slow request to the service (a sleeping server can take most of a minute to answer).
+    public var isFresh: Bool { Date().timeIntervalSince(updatedAt) < 150 }
 }
