@@ -261,6 +261,36 @@ final class SprintEngine: ObservableObject {
         }
     }
 
+    #if DEBUG
+    func stopTimerForPreview() {
+        timer?.invalidate()
+        timer = nil
+    }
+
+    func setPreview(running: Bool, away: Bool, now: Date) {
+        baseSprint = 3.2 * 3600; baseAway = 14 * 60; baseSwitches = 23
+        open = nil
+        if running {
+            start = SprintStart(id: "preview", device: "MacBook", user: "sam", task: "Algebra homework, chapter 4",
+                                plannedSeconds: 1500, startedAt: now.addingTimeInterval(-560), allowedApps: [],
+                                allowedBundleIds: [], allowedDomains: [], captureMode: .screenshot)
+            endsAt = now.addingTimeInterval(940)
+            closedAway = away ? 90 : 48
+            switches = away ? 4 : 3
+            awayNow = away ? ("espn.com", now.addingTimeInterval(-42), .distraction, "espn.com") : nil
+            lastSummary = nil
+            phase = .running
+        } else {
+            start = nil
+            awayNow = nil
+            phase = .idle
+            lastSummary = SprintSummary(task: "Algebra homework, chapter 4", status: .completed, focusPercent: 92,
+                                        switches: 3, awaySeconds: 118)
+        }
+        pulse &+= 1
+    }
+    #endif
+
     // MARK: Watching
 
     private func tick() {

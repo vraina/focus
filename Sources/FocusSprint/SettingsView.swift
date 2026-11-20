@@ -90,14 +90,23 @@ struct SettingsView: View {
         if unlocked {
             settings.onDisappear { unlocked = false } // locks again as soon as the tab is left
         } else {
-            VStack(spacing: 14) {
-                Image(systemName: "lock.fill").font(.system(size: 44)).foregroundStyle(.secondary)
-                Text("Parent settings").font(.title.bold())
-                Text("Only a parent can open this section. It needs the Mac administrator password.")
-                    .foregroundStyle(.secondary)
-                Button("Unlock…") { unlocked = AdminWriter.authenticate() }
-                    .buttonStyle(.borderedProminent)
-                    .keyboardShortcut(.defaultAction)
+            VStack(spacing: 16) {
+                Image(systemName: "lock.fill")
+                    .font(.system(size: 28, weight: .bold))
+                    .foregroundStyle(.white)
+                    .frame(width: 72, height: 72)
+                    .background(Theme.gradient, in: Circle())
+                VStack(spacing: 6) {
+                    Text("Parent settings").font(Theme.title(26))
+                    Text("Only a parent can open this section.\nIt needs the Mac administrator password.")
+                        .font(.system(size: 14)).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                }
+                Button { unlocked = AdminWriter.authenticate() } label: {
+                    Label("Unlock", systemImage: "lock.open.fill")
+                }
+                .buttonStyle(PrimaryButtonStyle())
+                .frame(width: 220)
+                .keyboardShortcut(.defaultAction)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }

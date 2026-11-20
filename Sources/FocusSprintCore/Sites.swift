@@ -40,6 +40,11 @@ public struct RequestAnswer: Codable, Sendable, Identifiable {
     public var explanation: String
     public var allowedUntil: String?
     public var approved: Bool { decision != "deny" }
+
+    public init(id: String, host: String, decision: String, minutes: Int, explanation: String, allowedUntil: String?) {
+        self.id = id; self.host = host; self.decision = decision
+        self.minutes = minutes; self.explanation = explanation; self.allowedUntil = allowedUntil
+    }
 }
 
 public struct AnswerList: Codable, Sendable {

@@ -8,7 +8,17 @@ BIN="$(swift build -c "$CONFIG" --show-bin-path)"
 APP="build/YoungWonks Focus.app"
 rm -rf build/FocusSprint.app
 rm -rf "$APP"
-mkdir -p "$APP/Contents/MacOS"
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+# App icon: Resources/AppIcon.png (1024x1024) is turned into the .icns macOS expects.
+if [ -f Resources/AppIcon.png ]; then
+    ICONSET="build/AppIcon.iconset"
+    rm -rf "$ICONSET" && mkdir -p "$ICONSET"
+    for size in 16 32 128 256 512; do
+        sips -z $size $size Resources/AppIcon.png --out "$ICONSET/icon_${size}x${size}.png" >/dev/null
+        sips -z $((size * 2)) $((size * 2)) Resources/AppIcon.png --out "$ICONSET/icon_${size}x${size}@2x.png" >/dev/null
+    done
+    iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/AppIcon.icns"
+fi
 cp "$BIN/FocusSprint" "$APP/Contents/MacOS/FocusSprint"
 cp "$BIN/focussprint-vaultd" build/focussprint-vaultd
 cat > "$APP/Contents/Info.plist" <<'PLIST'
@@ -20,6 +30,7 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
     <key>CFBundleName</key><string>YoungWonks Focus</string>
     <key>CFBundleDisplayName</key><string>YoungWonks Focus</string>
     <key>CFBundleExecutable</key><string>FocusSprint</string>
+    <key>CFBundleIconFile</key><string>AppIcon</string>
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleShortVersionString</key><string>0.1.0</string>
     <key>CFBundleVersion</key><string>1</string>

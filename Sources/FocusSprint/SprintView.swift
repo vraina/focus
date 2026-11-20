@@ -15,16 +15,19 @@ struct SprintView: View {
     private var allowed: [AllowedApp] {
         (try? JSONDecoder().decode([AllowedApp].self, from: Data(allowedJSON.utf8))) ?? []
     }
+    private var canStart: Bool {
+        helperReady && canRecord && !(allowed.isEmpty && FocusRules.parseList(domains).isEmpty)
+    }
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: 16) {
                 if !helperReady {
-                    banner("The YoungWonks Focus vault helper is not installed on this Mac. A parent needs to run scripts/install.sh once.", .red)
+                    Notice(text: "The YoungWonks Focus helper is not installed on this Mac. A parent needs to run scripts/install.sh once.", tint: Theme.bad)
                 }
                 if !canRecord {
-                    HStack {
-                        banner("Screen Recording permission is needed so switches can be captured.", .orange)
+                    HStack(spacing: 10) {
+                        Notice(text: "Screen Recording permission is needed so switches can be captured.", tint: Theme.warn)
                         Button("Grant…") {
                             CGRequestScreenCaptureAccess()
                             NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")!)
@@ -37,8 +40,8 @@ struct SprintView: View {
                 case .onBreak: onBreak
                 }
             }
-            .padding(24)
-            .frame(maxWidth: 640, alignment: .leading)
+            .padding(28)
+            .frame(maxWidth: 680, alignment: .leading)
             .frame(maxWidth: .infinity)
         }
         .onAppear(perform: refresh)
@@ -59,88 +62,105 @@ struct SprintView: View {
             .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
 
-    private func banner(_ text: String, _ color: Color) -> some View {
-        Label(text, systemImage: "exclamationmark.triangle.fill")
-            .foregroundStyle(color)
-            .padding(10)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(color.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
+    private func toggle(_ app: AllowedApp) {
+        var list = allowed.filter { $0.bundleId != app.bundleId }
+        if list.count == allowed.count { list.append(app) }
+        allowedJSON = String(data: (try? JSONEncoder().encode(list)) ?? Data("[]".utf8), encoding: .utf8) ?? "[]"
     }
 
     // MARK: Setup
 
     private var setup: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            if let summary = engine.lastSummary {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(summary.status == .completed ? "Sprint complete" : "Sprint ended early").font(.headline)
-                    Text("\(summary.focusPercent)% focused · \(summary.switches) switches · \(Format.duration(summary.awaySeconds)) away")
-                        .font(.title3.bold())
-                        .foregroundStyle(levelColor(1 - Double(summary.focusPercent) / 100))
-                    Button("Take a 5 minute break") { engine.startBreak(minutes: 5) }
-                }
-                .padding(14)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 10))
+        VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Ready to focus?").font(Theme.title(30))
+                Text("Pick what this task needs. Anything else you switch to gets noticed.")
+                    .font(.system(size: 14)).foregroundStyle(.secondary)
             }
+            .padding(.bottom, 2)
 
-            Text("New sprint").font(.largeTitle.bold())
+            if let summary = engine.lastSummary { summaryCard(summary) }
 
-            VStack(alignment: .leading, spacing: 6) {
-                Text("What are you working on?").font(.headline)
-                TextField("e.g. Algebra homework, chapter 4", text: $task).textFieldStyle(.roundedBorder)
+            VStack(alignment: .leading, spacing: 10) {
+                SectionLabel(text: "What are you working on?")
+                TextField("e.g. Algebra homework, chapter 4", text: $task)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 17, weight: .medium))
             }
+            .card()
 
-            VStack(alignment: .leading, spacing: 6) {
-                Text("How long?").font(.headline)
-                Picker("", selection: $minutes) {
-                    ForEach([15, 25, 45, 60], id: \.self) { Text("\($0) min").tag($0) }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-            }
-
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Websites you need").font(.headline)
-                TextField("khanacademy.org, docs.google.com", text: $domains).textFieldStyle(.roundedBorder)
-                Text("Any other site, including a quick tab switch, is recorded as a switch away.")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Apps you need").font(.headline)
-                let all = (running + allowed.filter { saved in !running.contains { $0.bundleId == saved.bundleId } })
-                if all.isEmpty {
-                    Text("Open the apps you will use, then come back here.").foregroundStyle(.secondary)
-                }
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 180), alignment: .leading)], alignment: .leading, spacing: 6) {
-                    ForEach(all) { app in
-                        Toggle(app.name, isOn: Binding(
-                            get: { allowed.contains { $0.bundleId == app.bundleId } },
-                            set: { on in
-                                var list = allowed.filter { $0.bundleId != app.bundleId }
-                                if on { list.append(app) }
-                                allowedJSON = String(data: (try? JSONEncoder().encode(list)) ?? Data("[]".utf8), encoding: .utf8) ?? "[]"
-                            }))
+            VStack(alignment: .leading, spacing: 10) {
+                SectionLabel(text: "How long?")
+                HStack(spacing: 8) {
+                    ForEach([15, 25, 45, 60], id: \.self) { value in
+                        Chip(title: "\(value) min", selected: minutes == value) { minutes = value }
                     }
                 }
             }
+            .card()
 
-            if let error = engine.startError { banner(error, .red) }
+            VStack(alignment: .leading, spacing: 10) {
+                SectionLabel(text: "Websites you need")
+                TextField("khanacademy.org, docs.google.com", text: $domains)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 15))
+                Text("Sites already known to be productive count automatically. A quick tab switch to anything else is recorded.")
+                    .font(.system(size: 12)).foregroundStyle(.secondary)
+            }
+            .card()
+
+            VStack(alignment: .leading, spacing: 10) {
+                SectionLabel(text: "Apps you need")
+                let all = running + allowed.filter { saved in !running.contains { $0.bundleId == saved.bundleId } }
+                if all.isEmpty {
+                    Text("Open the apps you will use, then come back here.").font(.system(size: 13)).foregroundStyle(.secondary)
+                }
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 8)], alignment: .leading, spacing: 8) {
+                    ForEach(all) { app in
+                        Chip(title: app.name, selected: allowed.contains { $0.bundleId == app.bundleId },
+                             icon: AppIcons.icon(bundleId: app.bundleId)) { toggle(app) }
+                    }
+                }
+            }
+            .card()
+
+            if let error = engine.startError { Notice(text: error, tint: Theme.bad) }
 
             Button {
                 engine.startSprint(task: task.trimmingCharacters(in: .whitespaces), minutes: minutes,
                                    allowedApps: allowed, domains: FocusRules.parseList(domains))
             } label: {
-                Text("Start sprint").font(.title3.bold()).frame(maxWidth: .infinity).padding(.vertical, 6)
+                Label("Start \(minutes) minute sprint", systemImage: "play.fill")
             }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(PrimaryButtonStyle())
             .keyboardShortcut(.defaultAction)
-            .disabled(!helperReady || !canRecord || (allowed.isEmpty && FocusRules.parseList(domains).isEmpty))
+            .disabled(!canStart)
 
-            Text("During a sprint, every switch to something not listed above is saved with a picture of the screen. You can review all of it under History. Outside a sprint, only visits to the known distractions listed under Parent settings are recorded.")
-                .font(.caption).foregroundStyle(.secondary)
+            Text(canStart ? "Nothing is ever blocked. Switches are saved with a picture so you can review them under History."
+                          : "Choose at least one website or app to start.")
+                .font(.system(size: 12)).foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .center)
         }
+    }
+
+    private func summaryCard(_ summary: SprintSummary) -> some View {
+        let tint = levelColor(1 - Double(summary.focusPercent) / 100)
+        return HStack(spacing: 16) {
+            ZStack {
+                Ring(progress: Double(summary.focusPercent) / 100, lineWidth: 7, tint: tint)
+                Text("\(summary.focusPercent)%").font(Theme.number(15))
+            }
+            .frame(width: 60, height: 60)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(summary.status == .completed ? "Sprint complete" : "Sprint ended early").font(Theme.title(17))
+                Text("\(summary.focusPercent)% focused · \(summary.switches) switches · \(Format.duration(summary.awaySeconds)) away")
+                    .font(.system(size: 13)).foregroundStyle(.secondary)
+            }
+            Spacer()
+            Button("Take a 5 min break") { engine.startBreak(minutes: 5) }
+                .controlSize(.large)
+        }
+        .card()
     }
 
     // MARK: Running
@@ -148,59 +168,55 @@ struct SprintView: View {
     private var live: some View {
         let _ = engine.pulse
         return VStack(spacing: 22) {
-            Text(engine.start?.task ?? "").font(.title2)
-            ZStack {
-                Circle().stroke(Color.primary.opacity(0.1), lineWidth: 14)
-                Circle().trim(from: 0, to: engine.sprintProgress)
-                    .stroke(Color.blue, style: StrokeStyle(lineWidth: 14, lineCap: .round))
-                    .rotationEffect(.degrees(-90))
-                Text(SprintEngine.clock(engine.remaining)).font(.system(size: 64, weight: .bold)).monospacedDigit()
+            VStack(spacing: 6) {
+                SectionLabel(text: "Focusing on")
+                Text(engine.start?.task ?? "").font(Theme.title(22)).multilineTextAlignment(.center)
             }
-            .frame(width: 260, height: 260)
+            ZStack {
+                Ring(progress: engine.sprintProgress, lineWidth: 16, tint: nil)
+                VStack(spacing: 2) {
+                    Text(SprintEngine.clock(engine.remaining)).font(Theme.number(68))
+                    Text("remaining").font(.system(size: 13)).foregroundStyle(.secondary)
+                }
+            }
+            .frame(width: 280, height: 280)
+            .padding(.vertical, 4)
 
             if let away = engine.awayNow {
-                Label("Away: \(away.label) · \(SprintEngine.clock(Date().timeIntervalSince(away.since)))",
-                      systemImage: "exclamationmark.triangle.fill")
-                    .font(.title3.bold()).foregroundStyle(.red)
+                Pill(text: "Away: \(away.label) · \(SprintEngine.clock(Date().timeIntervalSince(away.since)))",
+                     tint: Theme.bad, icon: "exclamationmark.triangle.fill")
+                    .scaleEffect(1.25)
             } else {
-                Label("On task", systemImage: "checkmark.circle.fill").font(.title3.bold()).foregroundStyle(.green)
+                Pill(text: "On task", tint: Theme.good, icon: "checkmark.circle.fill").scaleEffect(1.25)
             }
 
-            HStack(spacing: 14) {
-                StatTile(title: "Switches", value: "\(engine.sprintSwitches)")
-                StatTile(title: "Time away", value: Format.duration(engine.sprintAway))
+            HStack(spacing: 12) {
+                StatTile(title: "Switches", value: "\(engine.sprintSwitches)", icon: "arrow.left.arrow.right")
+                StatTile(title: "Time away", value: Format.duration(engine.sprintAway), icon: "clock")
                 StatTile(title: "Distraction", value: "\(Int((engine.sprintDistraction * 100).rounded()))%",
-                         color: levelColor(engine.sprintDistraction))
+                         color: levelColor(engine.sprintDistraction), icon: "gauge.medium")
             }
-            Button("End sprint early", role: .destructive) { engine.stopEarly() }
+            .padding(.top, 6)
+
+            Button("End sprint early") { engine.stopEarly() }
+                .buttonStyle(.plain)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(Theme.bad)
         }
         .frame(maxWidth: .infinity)
+        .padding(.top, 8)
     }
 
     private var onBreak: some View {
         let _ = engine.pulse
-        return VStack(spacing: 16) {
-            Text("Break").font(.largeTitle.bold())
-            Text(SprintEngine.clock(engine.remaining)).font(.system(size: 64, weight: .bold)).monospacedDigit()
-            Text("Nothing is tracked during a break.").foregroundStyle(.secondary)
-            Button("Skip break") { engine.stopEarly() }
+        return VStack(spacing: 18) {
+            Image(systemName: "cup.and.saucer.fill").font(.system(size: 40)).foregroundStyle(Theme.gradient)
+            Text("Break").font(Theme.title(30))
+            Text(SprintEngine.clock(engine.remaining)).font(Theme.number(68))
+            Text("Nothing is tracked during a break.").font(.system(size: 13)).foregroundStyle(.secondary)
+            Button("Skip break") { engine.stopEarly() }.controlSize(.large)
         }
         .frame(maxWidth: .infinity)
-    }
-}
-
-struct StatTile: View {
-    var title: String
-    var value: String
-    var color: Color = .primary
-
-    var body: some View {
-        VStack(spacing: 4) {
-            Text(value).font(.system(size: 26, weight: .bold)).monospacedDigit().foregroundStyle(color)
-            Text(title).font(.caption).foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 12)
-        .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 10))
+        .padding(.top, 60)
     }
 }
