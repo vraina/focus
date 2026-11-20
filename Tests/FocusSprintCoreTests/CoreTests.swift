@@ -83,6 +83,39 @@ final class CoreTests: XCTestCase {
         XCTAssertNil(q("https://notgoogle.com/search?q=hello"))
     }
 
+    func testAllDayRecordIncludesSprints() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("fs-day-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let noon = Calendar.current.date(bySettingHour: 12, minute: 0, second: 0, of: Date(timeIntervalSince1970: 1_800_000_000))!
+        func write(_ id: String, kind: String?, offset: Double, elapsed: Double, away: Double, active: Double?) throws {
+            let folder = dir.appendingPathComponent(id)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            let start = SprintStart(id: id, device: "d", user: "u", task: id, plannedSeconds: Int(elapsed),
+                                    startedAt: noon.addingTimeInterval(offset), allowedApps: [], allowedBundleIds: [],
+                                    allowedDomains: [], captureMode: .screenshot, kind: kind)
+            try JSONCoding.encoder.encode(start).write(to: folder.appendingPathComponent("start.json"))
+            let end = SprintEnd(id: id, endedAt: noon.addingTimeInterval(offset + elapsed), status: .completed,
+                                focusedSeconds: elapsed - away, awaySeconds: away, switchCount: 1, activeSeconds: active)
+            try JSONCoding.encoder.encode(end).write(to: folder.appendingPathComponent("end.json"))
+            let event = DistractionEvent(id: id + "-e1", sprintId: id, seq: 1, startedAt: noon.addingTimeInterval(offset + 10),
+                                         endedAt: noon.addingTimeInterval(offset + 10 + away), durationSeconds: away, appName: "A",
+                                         bundleId: "a", title: "", url: nil, host: nil, category: .distraction, media: [])
+            try JSONCoding.encoder.encode(event).write(to: folder.appendingPathComponent("e1.json"))
+        }
+        try write("sprint", kind: nil, offset: 0, elapsed: 1500, away: 300, active: nil)
+        try write("outside", kind: "ambient", offset: 3600, elapsed: 1800, away: 100, active: 500)
+
+        let shown = SprintReader.listForDisplay(in: dir)
+        XCTAssertEqual(shown.count, 2) // the sprint, and one all-day record
+        let day = try XCTUnwrap(shown.first { $0.isAmbient })
+        XCTAssertEqual(day.start.task, "All day")
+        XCTAssertEqual(day.elapsedSeconds, 2000) // 1500 of sprint + 500 of Mac use outside it
+        XCTAssertEqual(day.awaySeconds, 400)
+        XCTAssertEqual(day.events.count, 2)
+        XCTAssertEqual(day.focusPercent, 80)
+        XCTAssertFalse(day.interrupted)
+    }
+
     func testContextKey() {
         let a = ctx("c", "Chrome", url: "https://www.instagram.com/a", browser: true)
         let b = ctx("c", "Chrome", url: "https://instagram.com/b", browser: true)

@@ -135,7 +135,7 @@ struct SprintRow: View {
                 HStack(spacing: 5) {
                     Text(record.isAmbient ? "\(100 - record.focusPercent)% distracted" : "\(record.focusPercent)% focused")
                         .font(.system(size: 11, weight: .semibold)).foregroundStyle(levelColor(distracted))
-                    Text("· \(record.events.count) \(record.isAmbient ? "visits" : "switches")")
+                    Text("· \(record.events.count) switches")
                         .font(.system(size: 11)).foregroundStyle(.secondary)
                     if record.interrupted { Text("· interrupted").font(.system(size: 11)).foregroundStyle(Theme.bad) }
                 }
@@ -186,19 +186,14 @@ struct SprintDetail: View {
                     Text(subtitle).font(.system(size: 13)).foregroundStyle(.secondary)
                 }
 
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: 4), spacing: 12) {
-                    if record.isAmbient {
-                        StatTile(title: "Distracted", value: "\(100 - record.focusPercent)%", color: levelColor(distracted), icon: "gauge.medium")
-                        StatTile(title: "Visits", value: "\(record.events.count)", icon: "arrow.left.arrow.right")
-                        StatTile(title: "Time on them", value: Format.duration(record.awaySeconds), icon: "clock")
-                        StatTile(title: "Mac in use", value: Format.duration(record.elapsedSeconds), icon: "desktopcomputer")
-                    } else {
-                        StatTile(title: "Focused", value: "\(record.focusPercent)%", color: levelColor(distracted), icon: "scope")
-                        StatTile(title: "Switches", value: "\(record.events.count)", icon: "arrow.left.arrow.right")
-                        StatTile(title: "Time away", value: Format.duration(record.awaySeconds), icon: "clock")
-                        StatTile(title: "Best streak", value: Format.duration(record.longestFocusSeconds), icon: "flame")
+                // Four across when there is room, two by two in a narrow window, so titles are never cut off.
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 12) { ForEach(tiles.indices, id: \.self) { tiles[$0].frame(minWidth: 116) } }
+                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: 2), spacing: 12) {
+                        ForEach(tiles.indices, id: \.self) { tiles[$0] }
                     }
                 }
+                .fixedSize(horizontal: false, vertical: true)
 
                 if !record.isAmbient {
                     VStack(alignment: .leading, spacing: 10) {
@@ -231,13 +226,13 @@ struct SprintDetail: View {
                 if record.events.isEmpty {
                     HStack(spacing: 10) {
                         Image(systemName: "checkmark.seal.fill").font(.system(size: 20)).foregroundStyle(Theme.good)
-                        Text(record.isAmbient ? "No visits to known distractions." : "No switches away during this sprint. Nice work.")
+                        Text(record.isAmbient ? "No distractions recorded this day." : "No switches away during this sprint. Nice work.")
                             .font(.system(size: 14, weight: .medium))
                         Spacer()
                     }
                     .card()
                 } else {
-                    SectionLabel(text: record.isAmbient ? "Every visit" : "Every switch away").padding(.top, 4)
+                    SectionLabel(text: record.isAmbient ? "Every switch away, all day" : "Every switch away").padding(.top, 4)
                     ForEach(record.events) { event in
                         // A combined day spans several stored sessions, so each event's files are looked up by its own session.
                         EventCard(event: event,
@@ -250,9 +245,23 @@ struct SprintDetail: View {
         }
     }
 
+    private var tiles: [StatTile] {
+        let distracted = 1 - Double(record.focusPercent) / 100
+        if record.isAmbient {
+            return [StatTile(title: "Distracted", value: "\(100 - record.focusPercent)%", color: levelColor(distracted), icon: "gauge.medium"),
+                    StatTile(title: "Switches", value: "\(record.events.count)", icon: "arrow.left.arrow.right"),
+                    StatTile(title: "Time away", value: Format.duration(record.awaySeconds), icon: "clock"),
+                    StatTile(title: "Tracked", value: Format.duration(record.elapsedSeconds), icon: "desktopcomputer")]
+        }
+        return [StatTile(title: "Focused", value: "\(record.focusPercent)%", color: levelColor(distracted), icon: "scope"),
+                StatTile(title: "Switches", value: "\(record.events.count)", icon: "arrow.left.arrow.right"),
+                StatTile(title: "Time away", value: Format.duration(record.awaySeconds), icon: "clock"),
+                StatTile(title: "Best streak", value: Format.duration(record.longestFocusSeconds), icon: "flame")]
+    }
+
     private var subtitle: String {
         if record.isAmbient {
-            return "\(record.start.startedAt.formatted(date: .complete, time: .omitted)) · visits to known distractions while no sprint was running"
+            return "\(record.start.startedAt.formatted(date: .complete, time: .omitted)) · the whole day: sprints, and time outside them"
         }
         let base = "\(record.start.startedAt.formatted(date: .complete, time: .shortened)) · \(record.start.plannedSeconds / 60) min planned · \(record.start.user) on \(record.start.device)"
         return record.interrupted ? base + " · the app was quit mid-sprint" : base

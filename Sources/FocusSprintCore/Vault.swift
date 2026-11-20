@@ -183,18 +183,21 @@ public enum SprintReader {
         return out.sorted { $0.start.startedAt > $1.start.startedAt }
     }
 
-    /// Sprints as they are, plus one combined "All day" record per calendar day of outside-sprint tracking.
+    /// Sprints as they are, plus one "All day" record per calendar day that covers everything tracked
+    /// that day: the sprints and the time outside them.
     public static func listForDisplay(in sprintsDir: URL) -> [SprintRecord] {
         let all = list(in: sprintsDir)
         var out = all.filter { !$0.isAmbient }
         let calendar = Calendar.current
-        let byDay = Dictionary(grouping: all.filter(\.isAmbient)) { calendar.startOfDay(for: $0.start.startedAt) }
+        let byDay = Dictionary(grouping: all) { calendar.startOfDay(for: $0.start.startedAt) }
         let stamp = DateFormatter()
         stamp.dateFormat = "yyyyMMdd"
         for (day, parts) in byDay {
             let ordered = parts.sorted { $0.start.startedAt < $1.start.startedAt }
-            var record = ordered[ordered.count - 1]
-            record.start.task = "All day, outside sprints"
+            var record = ordered[0]
+            record.start.kind = "ambient"
+            record.start.task = "All day"
+            record.start.startedAt = day.addingTimeInterval(86399) // sorts the day summary above that day sprints
             record.end = nil
             record.events = ordered.flatMap(\.events).sorted { $0.startedAt < $1.startedAt }
             record.merged = ("day-" + stamp.string(from: day),
