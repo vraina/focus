@@ -152,7 +152,7 @@ def parse_settings(form) -> dict:
             domains.append(host)
     return {"captureMode": "video" if form.get("captureMode") == "video" else "screenshot",
             "clipSeconds": number("clipSeconds", 2, 15, 5), "trackAllDay": form.get("trackAllDay") == "on",
-            "distractionDomains": domains, "distractionApps": lines("apps", 100)}
+            "distractionDomains": domains}
 
 
 class StaleForm(Exception):
@@ -491,6 +491,37 @@ def register(app, svc):
         # Its token stops working at once. What it already uploaded stays.
         devices.update_one({"_id": device_id, "familyId": request.family["_id"]}, {"$set": {"revoked": True, "revokedAt": utcnow()}})
         return redirect(url_for("computers"))
+
+    # --- Apps: how each app counts, per person ----------------------------------------------------
+
+    APP_STATES = {"work": "Work", "distraction": "Distraction", "neutral": "Doesn't count"}
+
+    def app_lists(account: dict, family: dict) -> list[dict]:
+        """The kids of a household share one list, which admins manage. Every adult has their own, private one."""
+        lists = [{"key": "kids", "label": "The kids' apps", "scope": f"k:{family['_id']}"}] if is_admin(account) else []
+        lists.append({"key": "mine", "label": "My own apps", "scope": f"m:{account['memberId']}"})
+        return lists
+
+    @app.route("/dashboard/apps", methods=["GET", "POST"])
+    @signed_in
+    def apps_view():
+        lists = app_lists(request.account, request.family)
+        picked = next((x for x in lists if x["key"] == (request.form if request.method == "POST" else request.args).get("list", "")), lists[0])
+        if request.method == "POST":
+            check_csrf()
+            state = request.form.get("state", "")
+            doc_id = f"{picked['scope']}|{request.form.get('bundle', '').lower()}"
+            if state in APP_STATES:
+                # The scope comes from who is signed in, never from the form, so nobody can touch another list.
+                db["apps"].update_one({"_id": doc_id, "scope": picked["scope"]}, {"$set": {
+                    "state": state, "source": "parent", "reason": "Set on the website.", "updatedAt": utcnow()}})
+            return redirect(url_for("apps_view", list=picked["key"]))
+        rows = [{"bundle": d["bundleId"], "name": d.get("name", d["bundleId"]), "state": d["state"], "reason": d.get("reason", ""),
+                 "by_person": d.get("source") == "parent"}
+                for d in db["apps"].find({"scope": picked["scope"]}).sort("name", 1).limit(3000)]
+        order = {"distraction": 0, "work": 1, "neutral": 2}
+        rows.sort(key=lambda r: (order.get(r["state"], 3), r["name"].lower()))
+        return render_template("apps.html", apps=rows, lists=lists, picked=picked["key"], states=APP_STATES)
 
     # --- Settings ------------------------------------------------------------------------------
 

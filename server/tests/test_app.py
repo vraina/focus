@@ -13,7 +13,9 @@ OWNER = "owner@example.com"
 os.environ.update(SECRET_KEY="test-secret", PARENT_EMAIL=OWNER, PARENT_PASSWORD="owner-password-1",
                   PUBLIC_URL="http://localhost", TIMEZONE="UTC", FAMILY_DAILY_AI_CALLS="50")
 os.environ.pop("RESEND_API_KEY", None)
-from app import create_app  # noqa: E402
+from app import DEFAULT_SETTINGS, create_app  # noqa: E402
+
+DEFAULT_APPS = DEFAULT_SETTINGS["distractionApps"]
 
 
 class World:
@@ -52,8 +54,19 @@ class World:
             self.emails.append({"to": to, "subject": subject, "body": body})
             return True
 
+        def label_app(name, bundle):
+            self.app_calls = getattr(self, "app_calls", 0) + 1
+            if "steam" in bundle.lower():
+                return {"label": "distraction", "reason": "A game launcher."}
+            if "xcode" in name.lower():
+                return {"label": "work", "reason": "A developer tool."}
+            if "flaky" in name.lower():
+                return None
+            return {"label": "neutral", "reason": "A utility."}
+
         return create_app(db=self.db, classify=classify, review=review, send_email=send, label_search=label_search,
-                          latest_release=lambda: {"version": "0.4.0", "url": "https://example.com/YoungWonksFocus.pkg"})
+                          latest_release=lambda: {"version": "0.4.0", "url": "https://example.com/YoungWonksFocus.pkg"},
+                          label_app=label_app)
 
     def browser(self):
         return self.app.test_client()
@@ -564,7 +577,7 @@ def test_settings_reach_the_right_macs(w):
     assert admin.post("/dashboard/settings", data=form).status_code == 200
     client = w.browser()
     household = {"captureMode": "video", "clipSeconds": 15, "trackAllDay": False,
-                 "distractionDomains": ["roblox.com"], "distractionApps": ["Steam", "Minecraft"]}
+                 "distractionDomains": ["roblox.com"], "distractionApps": DEFAULT_APPS}  # apps now have their own page
     assert client.get("/api/config", headers=kid_mac).json["settings"] == household
     # The admin's own Mac follows the admin's own choices, not the kids' settings.
     assert client.get("/api/config", headers=own_mac).json["settings"]["captureMode"] == "screenshot"
@@ -685,3 +698,89 @@ def test_a_form_without_its_cookie_comes_back_with_an_explanation(w):
     admin, _ = w.sign_in()
     refused = admin.post("/dashboard/computers/code", data={"csrf": "wrong", "member": "x"})
     assert refused.status_code == 303 and refused.headers["Location"].endswith("/dashboard?again=1")
+
+
+def test_apps_are_labelled_once_and_a_person_can_overrule(w):
+    admin = w.household("mum@example.com")
+    kid = w.add_kid(admin, "Mia")
+    mac = w.pair(admin, kid, name="Mia's Mac")
+    c = w.browser()
+    seen = lambda b, n: c.post("/api/app", json={"bundleId": b, "name": n}, headers=mac)
+    assert seen("com.example.steamish", "Heroic").json["state"] == "distraction"
+    assert seen("com.apple.dt.Xcode", "Xcode").json["state"] == "work"
+    assert seen("com.apple.Preview", "Preview").json["state"] == "neutral"
+    assert seen("com.spotify.client", "Spotify").json["state"] == "distraction"  # on the household's own list: no AI needed
+    calls = w.app_calls
+    assert seen("com.apple.dt.Xcode", "Xcode").json["state"] == "work" and w.app_calls == calls  # asked once
+    assert seen("com.example.flaky", "Flaky").status_code == 503  # no answer yet: the Mac tries again later
+    assert seen("../etc", "x").status_code == 400 and seen("com.ok.app", "").status_code == 400
+    assert {a["bundleId"]: a["state"] for a in c.get("/api/apps", headers=mac).json["apps"]} == {
+        "com.example.steamish": "distraction", "com.apple.dt.Xcode": "work", "com.apple.Preview": "neutral",
+        "com.spotify.client": "distraction"}
+    # The admin sees the kids' list and changes a label; the Mac is told.
+    page = admin.get("/dashboard/apps").get_data(as_text=True)
+    assert "Heroic" in page and "A game launcher." in page and "Preview" in page
+    admin.post("/dashboard/apps", data={"csrf": w.csrf(admin, "/dashboard/apps"), "list": "kids", "bundle": "com.apple.Preview", "state": "work"})
+    assert {a["bundleId"]: a["state"] for a in c.get("/api/apps", headers=mac).json["apps"]}["com.apple.Preview"] == "work"
+    assert "Set by a person" in admin.get("/dashboard/apps").get_data(as_text=True)
+    admin.post("/dashboard/apps", data={"csrf": w.csrf(admin, "/dashboard/apps"), "list": "kids", "bundle": "com.apple.Preview", "state": "nonsense"})
+    assert w.db["apps"].find_one({"bundleId": "com.apple.Preview"})["state"] == "work"
+    # Another household gets the shared label without a second AI call, and cannot see or change this household's list.
+    other = w.household("dad@example.com")
+    other_mac = w.pair(other, w.add_kid(other, "Leo"), name="Leo's Mac")
+    calls = w.app_calls
+    assert c.post("/api/app", json={"bundleId": "com.example.steamish", "name": "Heroic"}, headers=other_mac).json["state"] == "distraction"
+    assert w.app_calls == calls
+    other.post("/dashboard/apps", data={"csrf": w.csrf(other, "/dashboard/apps"), "list": "kids", "bundle": "com.apple.dt.Xcode", "state": "distraction"})
+    assert {a["bundleId"]: a["state"] for a in c.get("/api/apps", headers=mac).json["apps"]}["com.apple.dt.Xcode"] == "work"
+    assert "Xcode" not in other.get("/dashboard/apps").get_data(as_text=True)
+    # An adult's own list is private: the admin's page for "mine" is the admin's own, and an adult's Mac has its own labels.
+    assert "Heroic" not in admin.get("/dashboard/apps?list=mine").get_data(as_text=True)
+
+
+def test_a_sprint_record_shows_apps_changed_from_the_defaults(w):
+    admin = w.household("mum@example.com")
+    kid = w.add_kid(admin, "Mia")
+    mac = w.pair(admin, kid, name="Mia's Mac")
+    c = w.browser()
+    sid = session_id()
+    start = {"_id": sid, "task": "Essay", "plannedSeconds": 1500, "startedAt": stamp(), "allowedApps": ["Pages", "Discord"],
+             "allowedBundleIds": [], "allowedDomains": [], "captureMode": "screenshot", "addedApps": ["Discord"], "removedApps": ["Xcode"]}
+    assert c.post(f"/api/upload/{sid}/start.json", json=start, headers=mac).status_code == 200
+    page = admin.get(f"/dashboard/day/{today()}").get_data(as_text=True)
+    assert "Apps changed for this sprint" in page and "<b>Discord</b>" in page and "<b>Xcode</b>" in page
+
+
+def test_labels_can_be_changed_from_an_admins_or_adults_own_mac(w):
+    admin = w.household("mum@example.com")
+    kid = w.add_kid(admin, "Mia")
+    kid_mac = w.pair(admin, kid, name="Family Mac", login="mia")
+    mum_mac = w.pair(admin, w.me("mum@example.com"), name="Mum's Mac", login="mum")
+    dad = w.join(w.invite_adult(admin, "Dad"), "dad@example.com", name="Dad")  # an adult member, not an admin
+    dad_mac = w.pair(dad, w.me("dad@example.com"), name="Dad's Mac", login="dad")
+    c = w.browser()
+    c.post("/api/app", json={"bundleId": "com.apple.Preview", "name": "Preview"}, headers=kid_mac)  # on the kids' list
+    c.post("/api/app", json={"bundleId": "com.apple.Preview", "name": "Preview"}, headers=dad_mac)  # and on Dad's own
+    change = lambda mac, which, state, bundle="com.apple.Preview": c.post(
+        "/api/applabel", json={"bundleId": bundle, "state": state, "list": which}, headers=mac)
+    # What each Mac is told: a kid cannot edit; an admin also gets the kids' list; another adult only their own.
+    assert c.get("/api/apps", headers=kid_mac).json == {"apps": [{"bundleId": "com.apple.Preview", "name": "Preview", "state": "neutral", "reason": "A utility."}], "canEdit": False}
+    mums = c.get("/api/apps", headers=mum_mac).json
+    assert mums["canEdit"] and mums["apps"] == [] and [a["name"] for a in mums["kids"]] == ["Preview"]
+    dads = c.get("/api/apps", headers=dad_mac).json
+    assert dads["canEdit"] and "kids" not in dads and len(dads["apps"]) == 1
+    # A kid's login cannot change anything; a non-admin adult cannot touch the kids' list.
+    assert change(kid_mac, "mine", "work").status_code == 403 and change(kid_mac, "kids", "work").status_code == 403
+    assert change(dad_mac, "kids", "work").status_code == 403
+    assert c.get("/api/apps", headers=kid_mac).json["apps"][0]["state"] == "neutral"
+    # The admin changes the kids' list from her own Mac: the kid's Mac is told, Dad's own list is untouched.
+    reply = change(mum_mac, "kids", "distraction")
+    assert reply.status_code == 200 and reply.json["kids"][0]["state"] == "distraction"
+    assert c.get("/api/apps", headers=kid_mac).json["apps"][0]["state"] == "distraction"
+    assert c.get("/api/apps", headers=dad_mac).json["apps"][0]["state"] == "neutral"
+    # An adult changes their own list; nobody else's moves.
+    assert change(dad_mac, "mine", "work").json["apps"][0]["state"] == "work"
+    assert c.get("/api/apps", headers=kid_mac).json["apps"][0]["state"] == "distraction"
+    assert change(mum_mac, "kids", "banana").status_code == 400 and change(mum_mac, "kids", "work", "com.not.seen").status_code == 404
+    assert change(mum_mac, "mine", "work").status_code == 404  # her own list has no such app
+    assert "Set in the app." in admin.get("/dashboard/apps").get_data(as_text=True)

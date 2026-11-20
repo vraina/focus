@@ -115,6 +115,7 @@ def register(app, svc, keep_days: int = 14):
             planned_end = parse(s["startedAt"]) + timedelta(seconds=s.get("plannedSeconds", 0))
             out.append({
                 "id": s["_id"], "task": s.get("task", ""), "ambient": ambient, "start": s["startedAt"],
+                "added": [str(x)[:80] for x in (s.get("addedApps") or [])][:30], "removed": [str(x)[:80] for x in (s.get("removedApps") or [])][:30],
                 "who": f"{names.get(s.get('memberId'), 'Member')} on {s.get('device', 'Mac')}", "planned": s.get("plannedSeconds", 0),
                 "elapsed": elapsed, "away": float(away), "events": mine,
                 "focus": int(round(max(0.0, elapsed - away) / elapsed * 100)),

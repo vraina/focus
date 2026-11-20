@@ -135,7 +135,8 @@ class Service:
 
 
 def create_app(db=None, classify=classifier.classify, review=classifier.review_request, send_email=mailer.send,
-               start_scheduler=False, label_search=classifier.classify_search, latest_release=releases.latest) -> Flask:
+               start_scheduler=False, label_search=classifier.classify_search, latest_release=releases.latest,
+               label_app=classifier.classify_app) -> Flask:
     app = Flask(__name__)
     secret = os.environ.get("SECRET_KEY", "")
     if not secret:
@@ -362,6 +363,83 @@ def create_app(db=None, classify=classifier.classify, review=classifier.review_r
             sites.update_one({"_id": doc["_id"]}, {"$setOnInsert": doc}, upsert=True)
             doc = sites.find_one({"_id": doc["_id"]})
         return jsonify(svc.site_public(doc, g.mid))
+
+    # --- Apps: one list per person (the kids of a household share theirs), like websites ---------
+
+    BUNDLE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{1,150}$")
+
+    @app.post("/api/app")
+    def api_app():
+        """A Mac has seen an app in use for the first time. It gets a label: work, distraction or neutral
+        (does not count). Claude decides from the app's name; a person can overrule it on the website."""
+        require_device()
+        body = request.get_json(silent=True) or {}
+        bundle = str(body.get("bundleId") or "").strip()
+        name = " ".join(str(body.get("name") or "").split())[:80]
+        if not BUNDLE_RE.match(bundle) or not name:
+            return jsonify(error="invalid app"), 400
+        key = bundle.lower()
+        doc_id = f"{g.scope}|{key}"
+        doc = db["apps"].find_one({"_id": doc_id})
+        if doc is None:
+            listed = {a.lower() for a in svc.settings_for(g.family, g.member).get("distractionApps", [])}
+            shared = db["appLabels"].find_one({"_id": key})
+            if name.lower() in listed:
+                label = {"label": "distraction", "reason": "On the list of distraction apps.", "source": "list"}
+            elif shared is not None:
+                label = {"label": shared["label"], "reason": shared.get("reason", ""), "source": "ai"}
+            else:
+                if not svc.may_use_ai(g.fid):
+                    return jsonify(error="daily limit reached"), 429
+                verdict = label_app(name, bundle)
+                if verdict is None:
+                    return jsonify(error="not labelled yet"), 503  # the helper keeps the request and retries
+                db["appLabels"].update_one({"_id": key}, {"$setOnInsert": {"_id": key, "name": name, "label": verdict["label"],
+                                                                           "reason": verdict["reason"], "createdAt": now()}}, upsert=True)
+                label = {**verdict, "source": "ai"}
+            doc = {"_id": doc_id, "familyId": g.fid, "scope": g.scope, "bundleId": bundle, "name": name, "state": label["label"],
+                   "reason": label["reason"], "source": label["source"], "createdAt": now(), "updatedAt": now()}
+            db["apps"].update_one({"_id": doc_id}, {"$setOnInsert": doc}, upsert=True)
+            doc = db["apps"].find_one({"_id": doc_id})
+        return jsonify(app_public(doc))
+
+    def app_public(doc: dict) -> dict:
+        return {"bundleId": doc["bundleId"], "name": doc.get("name", ""), "state": doc["state"], "reason": doc.get("reason", "")}
+
+    def manages_kids() -> bool:
+        """True when this Mac login belongs to a household admin or co-admin, who manage the kids' lists."""
+        return db["accounts"].find_one({"memberId": g.mid, "familyId": g.fid, "role": {"$in": ["admin", "coadmin"]}}) is not None
+
+    def app_lists() -> dict:
+        """The login's own list. An adult may change theirs in the app; an admin also gets the kids' list to manage."""
+        out = {"apps": [app_public(d) for d in db["apps"].find({"scope": g.scope}).limit(3000)],
+               "canEdit": g.member.get("kind") != "kid"}
+        if manages_kids():
+            out["kids"] = [app_public(d) for d in db["apps"].find({"scope": f"k:{g.fid}"}).limit(3000)]
+        return out
+
+    @app.get("/api/apps")
+    def api_apps():
+        require_device()
+        return jsonify(app_lists())
+
+    @app.post("/api/applabel")
+    def api_app_label():
+        """A label changed in the desktop app. Which login is asking is established by the helper, not the app:
+        an adult may change their own list, a household admin or co-admin also the kids' list. A kid's login cannot."""
+        require_device()
+        body = request.get_json(silent=True) or {}
+        state, which = body.get("state"), body.get("list")
+        if state not in ("work", "distraction", "neutral") or which not in ("mine", "kids"):
+            return jsonify(error="invalid change"), 400
+        if g.member.get("kind") == "kid" or (which == "kids" and not manages_kids()):
+            return jsonify(error="This login cannot change that list."), 403
+        scope = f"k:{g.fid}" if which == "kids" else g.scope
+        changed = db["apps"].update_one({"_id": f"{scope}|{str(body.get('bundleId') or '').lower()}", "scope": scope}, {"$set": {
+            "state": state, "source": "parent", "reason": "Set in the app.", "updatedAt": now()}})
+        if changed.matched_count == 0:
+            return jsonify(error="unknown app"), 404
+        return jsonify(app_lists())
 
     @app.get("/api/sites")
     def api_sites():

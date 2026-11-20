@@ -12,13 +12,33 @@ struct SprintView: View {
     @State private var canRecord = CGPreflightScreenCaptureAccess()
     @State private var helperReady = Paths.helperInstalled
     @State private var askedToRecord = false
+    /// The apps ticked for the sprint being set up, once the person has changed a tick. Nil = the defaults.
+    @State private var picked: Set<String>?
     @State private var linked = HelperStatus.load()?.linked ?? true
 
     private var allowed: [AllowedApp] {
         (try? JSONDecoder().decode([AllowedApp].self, from: Data(allowedJSON.utf8))) ?? []
     }
+    /// What is ticked to begin with: the person's Work apps. A Mac with no labels yet (not linked) falls back
+    /// to whatever was ticked last time.
+    private var hasLabels: Bool { !engine.apps.entries.isEmpty }
+    private var defaults: Set<String> {
+        hasLabels ? Set(engine.apps.entries.filter { $0.value.state == "work" }.keys) : Set(allowed.map { $0.bundleId.lowercased() })
+    }
+    private var ticked: Set<String> { picked ?? defaults }
+    /// Running apps, plus Work apps and anything ticked that is not running right now.
+    private var choices: [AllowedApp] {
+        var list = running
+        var seen = Set(running.map { $0.bundleId.lowercased() })
+        for entry in engine.apps.sorted where entry.state == "work" && seen.insert(entry.id).inserted {
+            list.append(AllowedApp(bundleId: entry.bundleId, name: entry.name))
+        }
+        for saved in allowed where seen.insert(saved.bundleId.lowercased()).inserted { list.append(saved) }
+        return list.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+    private var chosen: [AllowedApp] { choices.filter { ticked.contains($0.bundleId.lowercased()) } }
     private var canStart: Bool {
-        helperReady && canRecord && !(allowed.isEmpty && FocusRules.parseList(domains).isEmpty)
+        helperReady && canRecord && !(chosen.isEmpty && FocusRules.parseList(domains).isEmpty)
     }
 
     var body: some View {
@@ -81,8 +101,14 @@ struct SprintView: View {
     }
 
     private func toggle(_ app: AllowedApp) {
-        var list = allowed.filter { $0.bundleId != app.bundleId }
-        if list.count == allowed.count { list.append(app) }
+        var now = ticked
+        let key = app.bundleId.lowercased()
+        if now.remove(key) == nil { now.insert(key) }
+        picked = now == defaults ? nil : now
+        if !hasLabels { remember(choices.filter { now.contains($0.bundleId.lowercased()) }); picked = nil }
+    }
+
+    private func remember(_ list: [AllowedApp]) {
         allowedJSON = String(data: (try? JSONEncoder().encode(list)) ?? Data("[]".utf8), encoding: .utf8) ?? "[]"
     }
 
@@ -129,14 +155,24 @@ struct SprintView: View {
 
             VStack(alignment: .leading, spacing: 10) {
                 SectionLabel(text: "Apps you need")
-                let all = running + allowed.filter { saved in !running.contains { $0.bundleId == saved.bundleId } }
+                let all = choices
                 if all.isEmpty {
                     Text("Open the apps you will use, then come back here.").font(.system(size: 13)).foregroundStyle(.secondary)
                 }
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 8)], alignment: .leading, spacing: 8) {
                     ForEach(all) { app in
-                        Chip(title: app.name, selected: allowed.contains { $0.bundleId == app.bundleId },
+                        Chip(title: app.name, selected: ticked.contains(app.bundleId.lowercased()),
                              icon: AppIcons.icon(bundleId: app.bundleId)) { toggle(app) }
+                    }
+                }
+                if hasLabels {
+                    HStack(spacing: 6) {
+                        Text(picked == nil ? "Your Work apps are ticked. Changes here apply to this sprint only."
+                                           : "Changed for this sprint only. The sprint's record shows what was changed.")
+                            .font(.system(size: 12)).foregroundStyle(.secondary)
+                        if picked != nil {
+                            Button("Reset") { picked = nil }.buttonStyle(.link).font(.system(size: 12))
+                        }
                     }
                 }
             }
@@ -146,7 +182,9 @@ struct SprintView: View {
 
             Button {
                 engine.startSprint(task: task.trimmingCharacters(in: .whitespaces), minutes: minutes,
-                                   allowedApps: allowed, domains: FocusRules.parseList(domains))
+                                   allowedApps: chosen, domains: FocusRules.parseList(domains),
+                                   defaultApps: hasLabels ? defaults : nil)
+                picked = nil // the next sprint starts from the Work apps again
             } label: {
                 Label("Start \(minutes) minute sprint", systemImage: "play.fill")
             }

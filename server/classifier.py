@@ -266,3 +266,69 @@ def classify_search(query: str, task: str = "") -> dict | None:
     if label not in ("work", "distraction", "personal"):
         return None
     return {"label": label, "reason": "Private topic." if label == "personal" else str(data.get("reason") or "")[:300]}
+
+
+# --- Apps -----------------------------------------------------------------------------------
+
+APP_SYSTEM = """You label Mac apps for a focus app used by students (roughly 10 to 18) and by adults at work.
+
+You are given an app's name and its bundle identifier. Decide how time in that app should be treated, judging by \
+what the app is most commonly used for.
+
+- "work": apps mainly used to get schoolwork or work done. Writing, documents, spreadsheets, slides, notes, coding \
+and developer tools, design and creative production tools, terminals, reference and study apps, email, calendars, \
+video-meeting apps, and web browsers (time on individual websites is judged separately).
+- "distraction": apps mainly used for entertainment or socialising. Games and game launchers, social media, \
+video and music streaming, personal chat and messaging, sports, shopping, news and feed readers.
+- "neutral": apps that are neither. System utilities and settings, file managers, password managers, backup, \
+security and update tools, screenshot and clipboard helpers, menu-bar utilities, printers and device software.
+
+When an app is used for both work and chat (team messaging such as Slack or Microsoft Teams), choose "work". \
+When you do not recognise the app and its name and identifier give no real signal, choose "neutral" so an \
+unfamiliar tool is not flagged by mistake.
+
+Write the reason as one plain sentence that the person using the Mac, and a parent, will read."""
+
+APP_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "label": {"type": "string", "enum": ["work", "distraction", "neutral"]},
+        "reason": {"type": "string"},
+    },
+    "required": ["label", "reason"],
+    "additionalProperties": False,
+}
+
+
+def classify_app(name: str, bundle_id: str) -> dict | None:
+    """Returns {"label", "reason"}, or None when Claude could not give an answer (the caller retries later)."""
+    prompt = f"App name: {name}\nBundle identifier: {bundle_id}"
+    try:
+        response = _get_client().beta.messages.create(
+            model=MODEL,
+            max_tokens=2000,
+            system=APP_SYSTEM,
+            messages=[{"role": "user", "content": prompt}],
+            output_config={"effort": "low", "format": {"type": "json_schema", "schema": APP_SCHEMA}},
+            betas=["server-side-fallback-2026-07-01"],
+            fallbacks="default",
+        )
+    except anthropic.RateLimitError:
+        log.warning("app label: rate limited")
+        return None
+    except anthropic.APIStatusError as e:
+        log.error("app label: API error %s: %s", e.status_code, e.message)
+        return None
+    except anthropic.APIConnectionError:
+        log.warning("app label: could not reach the Claude API")
+        return None
+    if response.stop_reason != "end_turn":
+        return None
+    text = next((b.text for b in response.content if b.type == "text"), None)
+    try:
+        data = json.loads(text or "")
+    except json.JSONDecodeError:
+        return None
+    if data.get("label") not in ("work", "distraction", "neutral"):
+        return None
+    return {"label": data["label"], "reason": str(data.get("reason") or "")[:300]}

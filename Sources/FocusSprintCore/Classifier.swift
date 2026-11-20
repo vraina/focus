@@ -40,6 +40,14 @@ public struct FocusRules: Sendable {
     public var allowedDomains: [String]
     public var distractionDomains: [String]
     public var distractionApps: [String]
+    /// Bundle id (lowercase) -> "work" / "distraction" / "neutral", from the person's Apps list. An app with a
+    /// label goes by it; one that has none yet falls back to the names in `distractionApps`.
+    public var appLabels: [String: String] = [:]
+
+    public func appIsDistraction(_ ctx: ActivityContext) -> Bool {
+        if let label = appLabels[ctx.bundleId.lowercased()] { return label == "distraction" }
+        return distractionApps.contains(ctx.appName.lowercased())
+    }
 
     public init(allowedBundleIds: Set<String>, allowedDomains: [String], distractionDomains: [String], distractionApps: [String]) {
         self.allowedBundleIds = allowedBundleIds
@@ -93,7 +101,7 @@ public struct FocusRules: Sendable {
             guard ctx.url == nil, !title.isEmpty else { return false }
             return distractionDomains.contains { title.contains(String($0.split(separator: ".").first ?? "")) }
         }
-        return distractionApps.contains(ctx.appName.lowercased())
+        return appIsDistraction(ctx)
     }
 
     /// `awaitingLabel`: a label for this site has just been requested, so hold the verdict for a moment
@@ -120,7 +128,6 @@ public struct FocusRules: Sendable {
             return .neutral // blank / new-tab page
         }
         if allowedBundleIds.contains(ctx.bundleId) { return .onTask }
-        let name = ctx.appName.lowercased()
-        return .offTask(distractionApps.contains(name) ? .distraction : .offTask)
+        return .offTask(appIsDistraction(ctx) ? .distraction : .offTask)
     }
 }

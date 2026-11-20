@@ -101,12 +101,14 @@ struct MenuContent: View {
 enum Pane: String, CaseIterable, Identifiable {
     case focus = "Focus"
     case history = "History"
+    case apps = "Apps"
     case parent = "Account"
     var id: String { rawValue }
     var icon: String {
         switch self {
         case .focus: return "timer"
         case .history: return "chart.bar.xaxis"
+        case .apps: return "square.grid.2x2"
         case .parent: return "person.crop.circle"
         }
     }
@@ -126,6 +128,7 @@ struct ContentView: View {
                 switch pane {
                 case .focus: SprintView()
                 case .history: HistoryView()
+                case .apps: AppsView()
                 case .parent: SettingsView()
                 }
             }

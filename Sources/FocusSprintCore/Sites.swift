@@ -166,6 +166,12 @@ public struct SiteRequest: Codable, Sendable {
     public var code: String?
     /// Picking a profile only: the kid profile chosen for this login.
     public var member: String?
+    /// Apps only: the app that was seen in use.
+    public var bundleId: String?
+    public var appName: String?
+    /// Changing a label only: the new label, and which list ("mine" or "kids").
+    public var label: String?
+    public var list: String?
 
     public init(kind: String, host: String, reason: String? = nil, user: String? = nil, device: String? = nil,
                 id: String? = nil, minutes: Int? = nil, permanent: Bool? = nil, onParentList: Bool? = nil,
@@ -239,10 +245,10 @@ public final class SiteSync {
             let src = Paths.requests.appendingPathComponent(name)
             if name.hasPrefix(".tmp-") { continue }
             defer { unlink(src.path) }
-            guard name.range(of: #"^(classify|dispute|search|pair|claim|hello)-[a-z0-9.-]{1,260}\.json$"#, options: .regularExpression) != nil,
+            guard name.range(of: #"^(classify|dispute|search|pair|claim|hello|app|applabel)-[a-z0-9.-]{1,260}\.json$"#, options: .regularExpression) != nil,
                   let (data, owner) = Vault.readRegularFile(src, limit: 8192),
                   let req = try? JSONDecoder().decode(SiteRequest.self, from: data),
-                  SiteRequest.isValidHost(req.host), ["classify", "dispute", "search", "pair", "claim", "hello"].contains(req.kind) else { continue }
+                  SiteRequest.isValidHost(req.host), ["classify", "dispute", "search", "pair", "claim", "hello", "app", "applabel"].contains(req.kind) else { continue }
             Paths.prepareHome(for: owner)
             accepted[owner, default: 0] += 0
             if req.kind == "hello" { continue } // nothing to send: the area and its status now exist
@@ -404,7 +410,22 @@ public final class SiteSync {
             body = ["id": req.id ?? "", "query": req.query ?? "", "engine": req.host, "task": req.task ?? "",
                     "user": req.user ?? "", "device": req.device ?? ""]
         }
+        if req.kind == "app" { body = ["bundleId": req.bundleId ?? "", "name": req.appName ?? ""] }
+        if req.kind == "applabel" { body = ["bundleId": req.bundleId ?? "", "state": req.label ?? "", "list": req.list ?? "mine"] }
         let (data, status) = try await call(config, path: "/api/\(req.kind)", json: body)
+        if status == 200, req.kind == "app" {
+            guard let entry = try? JSONDecoder().decode(AppEntry.self, from: data) else { throw URLError(.cannotParseResponse) }
+            var list = AppList.load()
+            list.apps.removeAll { $0.id == entry.id }
+            list.apps.append(entry)
+            write(list)
+            return .done
+        }
+        if req.kind == "applabel" {
+            // The answer is the lists as they now stand. A refusal (not this login's to change) is simply dropped.
+            if status == 200, let lists = try? JSONDecoder().decode(AppList.self, from: data) { write(lists); return .done }
+            if status == 403 { return .rejected }
+        }
         if status == 200, req.kind == "search" {
             guard var entry = try? JSONDecoder().decode(SearchEntry.self, from: data) else { throw URLError(.cannotParseResponse) }
             if entry.text?.isEmpty == true { entry.text = nil }
@@ -439,6 +460,18 @@ public final class SiteSync {
         guard status == 200 else { throw URLError(.badServerResponse) }
         let list = try JSONDecoder().decode(SiteList.self, from: data)
         write(SiteBook(entries: list.sites))
+        // The same for apps: this is how a label changed on the website reaches the Mac.
+        let (appData, appStatus) = try await call(config, path: "/api/apps", json: nil)
+        if appStatus == 200, let apps = try? JSONDecoder().decode(AppList.self, from: appData) { write(apps) }
+    }
+
+    private func write(_ list: AppList) {
+        var list = list
+        list.apps.sort { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        list.kids?.sort { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        guard let data = try? JSONEncoder().encode(list) else { return }
+        try? data.write(to: Paths.apps, options: .atomic)
+        chmod(Paths.apps.path, 0o644)
     }
 
     private func call(_ config: ServiceConfig, path: String, json: [String: Any]?) async throws -> (Data, Int) {

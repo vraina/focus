@@ -39,6 +39,10 @@ final class SprintEngine: ObservableObject {
     /// Website labels (AI and parent decisions), kept current by the helper.
     private(set) var sites = SiteBook()
     private var sitesStamp: Date?
+    /// How each app counts for this person (from the website). Empty until the Mac is linked and labels arrive.
+    @Published private(set) var apps = AppBook()
+    private var appsStamp: Date?
+    private var appAsked: [String: Date] = [:]
     private var labelRequested: [String: Date] = [:]
     /// Requests sent and not answered yet: request id -> website.
     private var pendingRequests: [String: String] = [:]
@@ -211,6 +215,28 @@ final class SprintEngine: ObservableObject {
         sites = SiteBook(file: Paths.sites)
     }
 
+    /// Reads the labels straight away (the regular reload runs on the engine's tick).
+    func loadAppLabels() { appsStamp = nil; reloadAppsIfChanged() }
+
+    private func reloadAppsIfChanged() {
+        let stamp = (try? FileManager.default.attributesOfItem(atPath: Paths.apps.path))?[.modificationDate] as? Date
+        guard stamp != appsStamp else { return }
+        appsStamp = stamp
+        apps = AppBook(file: Paths.apps)
+        rules?.appLabels = apps.labels
+        ambientRules?.appLabels = apps.labels
+    }
+
+    /// Asks for a label the first time an app is seen in use. Browsers are left out: their time is judged per website.
+    private func noteApp(_ context: ActivityContext) {
+        guard !context.isSelf, !context.isBrowser, !FocusRules.systemOverlays.contains(context.bundleId),
+              apps.state(for: context.bundleId) == nil else { return }
+        let key = context.bundleId.lowercased()
+        if let asked = appAsked[key], Date().timeIntervalSince(asked) < 600 { return } // not labelled yet: ask again later
+        appAsked[key] = Date()
+        try? SiteRequest.app(bundleId: context.bundleId, name: context.appName)?.drop()
+    }
+
     /// The floating meter stays hidden while the day is clean and appears once there is real distraction.
     var meterVisible: Bool { awayNow != nil || todayAway > 0 }
 
@@ -221,16 +247,24 @@ final class SprintEngine: ObservableObject {
 
     // MARK: Sprint control
 
-    func startSprint(task: String, minutes: Int, allowedApps: [AllowedApp], domains: [String]) {
+    /// `defaultApps`: the bundle ids that were ticked to begin with (the person's Work apps). What the person
+    /// ticked or unticked on top of that is written into the sprint's record.
+    func startSprint(task: String, minutes: Int, allowedApps: [AllowedApp], domains: [String], defaultApps: Set<String>? = nil) {
         guard phase != .running else { return }
         closeAmbient(quitting: false)
         config = ParentConfig.load()
         let now = Date()
-        let sprint = SprintStart(
+        var sprint = SprintStart(
             id: Format.newSprintId(now: now), device: Host.current().localizedName ?? "Mac", user: NSUserName(),
             task: task.isEmpty ? "Focus sprint" : task, plannedSeconds: minutes * 60, startedAt: now,
             allowedApps: allowedApps.map(\.name), allowedBundleIds: allowedApps.map(\.bundleId),
             allowedDomains: domains, captureMode: config.captureMode)
+        if let defaultApps {
+            let changes = SprintApps.changes(defaults: defaultApps, chosen: allowedApps.map { ($0.bundleId, $0.name) },
+                                             names: apps.entries.mapValues(\.name))
+            sprint.addedApps = changes.added.isEmpty ? nil : changes.added
+            sprint.removedApps = changes.removed.isEmpty ? nil : changes.removed
+        }
         do {
             try Inbox.drop(sprintId: sprint.id, file: "start.json", data: JSONCoding.encoder.encode(sprint))
         } catch {
@@ -240,6 +274,7 @@ final class SprintEngine: ObservableObject {
         startError = nil
         rules = FocusRules(allowedBundleIds: Set(sprint.allowedBundleIds), allowedDomains: domains,
                            distractionDomains: config.distractionDomains, distractionApps: config.distractionApps)
+        rules?.appLabels = apps.labels
         start = sprint
         endsAt = now.addingTimeInterval(Double(sprint.plannedSeconds))
         closedAway = 0
@@ -349,6 +384,7 @@ final class SprintEngine: ObservableObject {
         let wasAway = awayNow?.label
         if ticks % 2 == 0 {
             reloadSitesIfChanged()
+            reloadAppsIfChanged()
             collectAnswers()
             reloadSearchesIfChanged()
         }
@@ -385,12 +421,14 @@ final class SprintEngine: ObservableObject {
         if ambientRules == nil {
             ambientRules = FocusRules(allowedBundleIds: [], allowedDomains: [], distractionDomains: config.distractionDomains,
                                       distractionApps: config.distractionApps)
+            ambientRules?.appLabels = apps.labels
         }
         guard let rules = ambientRules else { return }
         let context = SprintEngine.screenUnavailable ? nil : monitor.current()
         if let context {
             _ = awaitingLabel(context, rules: rules)
             noteSearch(context)
+            noteApp(context)
         }
         let distracted = context.map { rules.isKnownDistraction($0, sites: sites) } ?? false
         // Watching a video means no typing or mouse movement, so idle time only ends "in use" when
@@ -460,6 +498,7 @@ final class SprintEngine: ObservableObject {
     private func observe() {
         guard let rules, let context = monitor.current() else { return }
         noteSearch(context)
+        noteApp(context)
         let now = Date()
         switch rules.classify(context, sites: sites, awaitingLabel: awaitingLabel(context, rules: rules)) {
         case .neutral:

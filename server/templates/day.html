@@ -45,7 +45,9 @@
 {% for s in sprints %}
   <div class="card row">
     <div style="flex:1;min-width:200px"><div style="font-weight:700">{{ s.task }}</div>
-      <div class="muted small">{{ s.clock }} · {{ s.planned // 60 }} min planned · {{ s.who }}</div></div>
+      <div class="muted small">{{ s.clock }} · {{ s.planned // 60 }} min planned · {{ s.who }}</div>
+      {% if s.added or s.removed %}<div class="small" style="margin-top:4px"><span class="pill warn">Apps changed for this sprint</span>
+        {% if s.added %} allowed: <b>{{ s.added|join(", ") }}</b>{% endif %}{% if s.removed %} · not allowed: <b>{{ s.removed|join(", ") }}</b>{% endif %}</div>{% endif %}</div>
     <span class="pill {{ 'good' if s.status == 'Completed' else ('bad' if s.status == 'Interrupted' else 'warn') }}">{{ s.status }}</span>
     <div class="small muted">{{ s.events|length }} switches · {{ duration(s.away) }} away</div>
     <div class="num {{ level(1 - s.focus / 100) }}" style="font-size:20px;min-width:92px;text-align:right">{{ s.focus }}% focused</div>

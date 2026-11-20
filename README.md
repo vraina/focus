@@ -100,6 +100,20 @@ by itself. The helper does not trust the service or the download. It installs a 
 A development build, or one signed any other way, never updates itself. The Computers page shows each computer's
 version and whether an update is still pending. A sprint that is running when an update lands is cut short.
 
+## Apps
+
+Every app seen in use on a linked Mac gets a label the first time: **Work**, **Distraction** or **Doesn't count**.
+Claude picks it from the app's name; a household admin can change it on the website's Apps page (each adult
+changes their own). The kids of a household share one list; an adult's list is private.
+
+- All day, only apps labelled Distraction count. A Mac that is not linked yet uses a short built-in list.
+- Setting up a sprint ticks the Work apps. Ticks can be changed for that one sprint; the sprint's record shows
+  what was added or removed, so a parent sees it on the day's page.
+- The app shows the same list under Apps. A kid sees it read-only. An adult can change their own list there, and a
+  household admin or co-admin can also switch to the kids' list and change it. The helper tells the service which
+  Mac login is asking, and the service decides whether that login may. Browsers are not listed: their time is
+  judged per website.
+
 ## Website labels and "Needed for work"
 
 Nothing is ever blocked. The app records and shows; the parent sees the same numbers.

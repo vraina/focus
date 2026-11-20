@@ -55,10 +55,13 @@ public struct SprintStart: Codable, Identifiable, Sendable {
     public var captureMode: CaptureMode
     /// nil / "sprint" = a timed sprint. "ambient" = a stretch of all-day tracking outside sprints.
     public var kind: String?
+    /// Apps ticked for this sprint that are not Work apps on the person's list, and Work apps that were unticked.
+    public var addedApps: [String]?
+    public var removedApps: [String]?
     public var isAmbient: Bool { kind == "ambient" }
 
     enum CodingKeys: String, CodingKey {
-        case id = "_id", device, user, task, plannedSeconds, startedAt, allowedApps, allowedBundleIds, allowedDomains, captureMode, kind
+        case id = "_id", device, user, task, plannedSeconds, startedAt, allowedApps, allowedBundleIds, allowedDomains, captureMode, kind, addedApps, removedApps
     }
 
     public init(id: String, device: String, user: String, task: String, plannedSeconds: Int, startedAt: Date,

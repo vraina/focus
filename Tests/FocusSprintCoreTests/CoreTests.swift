@@ -124,6 +124,45 @@ final class CoreTests: XCTestCase {
         XCTAssertFalse(day.interrupted)
     }
 
+    func testAppLabelsDecideWhatCounts() {
+        var rules = FocusRules(allowedBundleIds: ["com.apple.dt.Xcode"], allowedDomains: [], distractionDomains: [], distractionApps: ["spotify"])
+        let app = { (id: String, name: String) in ActivityContext(bundleId: id, appName: name, title: "", url: nil, isBrowser: false, isSelf: false) }
+        // No labels yet (a Mac that is not linked): the built-in names are all there is.
+        XCTAssertTrue(rules.isKnownDistraction(app("com.spotify.client", "Spotify")))
+        XCTAssertFalse(rules.isKnownDistraction(app("com.hnc.Discord", "Discord")))
+        rules.appLabels = AppBook(entries: [
+            AppEntry(bundleId: "com.hnc.Discord", name: "Discord", state: "distraction"),
+            AppEntry(bundleId: "com.spotify.client", name: "Spotify", state: "neutral"), // a person said it does not count
+            AppEntry(bundleId: "com.apple.Notes", name: "Notes", state: "work"),
+        ]).labels
+        // All day: only apps labelled Distraction count; a label beats the built-in names.
+        XCTAssertTrue(rules.isKnownDistraction(app("com.hnc.discord", "Discord")))
+        XCTAssertFalse(rules.isKnownDistraction(app("com.spotify.client", "Spotify")))
+        XCTAssertFalse(rules.isKnownDistraction(app("com.apple.Notes", "Notes")))
+        XCTAssertFalse(rules.isKnownDistraction(app("com.unknown.tool", "Tool")))
+        // During a sprint: ticked apps are on task; anything else is away, and a Distraction app is recorded as one.
+        XCTAssertEqual(rules.classify(app("com.apple.dt.Xcode", "Xcode")), .onTask)
+        XCTAssertEqual(rules.classify(app("com.hnc.Discord", "Discord")), .offTask(.distraction))
+        XCTAssertEqual(rules.classify(app("com.apple.Notes", "Notes")), .offTask(.offTask)) // a Work app that was unticked
+        XCTAssertEqual(rules.classify(app("com.spotify.client", "Spotify")), .offTask(.offTask))
+    }
+
+    func testSprintRecordsWhatWasChangedFromTheWorkApps() {
+        let names = ["com.apple.dt.xcode": "Xcode", "com.apple.notes": "Notes"]
+        let defaults: Set<String> = ["com.apple.dt.xcode", "com.apple.notes"]
+        var changes = SprintApps.changes(defaults: defaults, chosen: [("com.apple.dt.Xcode", "Xcode"), ("com.apple.Notes", "Notes")], names: names)
+        XCTAssertTrue(changes.added.isEmpty && changes.removed.isEmpty)
+        changes = SprintApps.changes(defaults: defaults, chosen: [("com.apple.dt.Xcode", "Xcode"), ("com.hnc.Discord", "Discord")], names: names)
+        XCTAssertEqual(changes.added, ["Discord"])
+        XCTAssertEqual(changes.removed, ["Notes"])
+        // The request the app leaves for the helper: a safe file name, the real identifier inside.
+        let request = SiteRequest.app(bundleId: "com.Example_App.Mac", name: "Example")
+        XCTAssertEqual(request?.id, "com.example-app.mac")
+        XCTAssertEqual(request?.bundleId, "com.Example_App.Mac")
+        XCTAssertNil(SiteRequest.app(bundleId: "../../etc/passwd", name: "x"))
+        XCTAssertNil(SiteRequest.app(bundleId: "com.ok.app", name: ""))
+    }
+
     func testVersionsCompareAsNumbers() {
         XCTAssertTrue(AppVersion.isNewer("0.10.0", than: "0.9.2"))
         XCTAssertTrue(AppVersion.isNewer("v1.0", than: "0.9.9"))

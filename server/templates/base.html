@@ -54,6 +54,7 @@ header.bar nav{display:flex;flex-wrap:wrap}
   <nav>
     <a href="{{ url_for('overview') }}" class="{{ 'on' if active == 'days' }}">Days</a>
     <a href="{{ url_for('sites_view') }}" class="{{ 'on' if active == 'sites' }}">Websites</a>
+    <a href="{{ url_for('apps_view') }}" class="{{ 'on' if active == 'apps' }}">Apps</a>
     {% if is_admin(me) %}<a href="{{ url_for('people') }}" class="{{ 'on' if active == 'people' }}">People</a>{% endif %}
     <a href="{{ url_for('computers') }}" class="{{ 'on' if active == 'computers' }}">Computers</a>
     <a href="{{ url_for('settings') }}" class="{{ 'on' if active == 'settings' }}">Settings</a>

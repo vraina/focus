@@ -34,6 +34,7 @@ enum Snapshots {
             Shot(name: "3-focus-away", size: window, prepare: { engine.debugPreview("away") }, view: { app(.focus) }),
             Shot(name: "4-history", size: CGSize(width: 1040, height: 900), prepare: { engine.debugPreview("idle") }, view: { app(.history) }),
             Shot(name: "5-parent", size: window, view: { app(.parent) }),
+            Shot(name: "5b-apps", size: CGSize(width: 1040, height: 900), prepare: { engine.debugPreview("idle") }, view: { app(.apps) }),
             Shot(name: "6-widget-away", size: CGSize(width: 304, height: 300), prepare: { engine.debugPreview("away") },
                  view: { padded(MeterView(engine: engine)) }),
             Shot(name: "7-widget-calm", size: CGSize(width: 304, height: 180), prepare: { engine.debugPreview("idle") },
@@ -127,6 +128,7 @@ struct AppIconArt: View {
 extension SprintEngine {
     /// Puts the engine into a fixed, made-up state for screenshots. Tracking is switched off.
     func debugPreview(_ mode: String) {
+        loadAppLabels()
         stopTimerForPreview()
         let now = Date()
         setPreview(running: mode == "running" || mode == "away", away: mode.hasPrefix("away"), now: now)
