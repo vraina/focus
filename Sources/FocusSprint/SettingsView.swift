@@ -49,7 +49,8 @@ struct SettingsView: View {
                         .font(.system(size: 14)).foregroundStyle(.secondary)
                 }
                 if !helperRunning {
-                    Notice(text: "The YoungWonks Focus helper is not running on this Mac. Run the installer again from an administrator account.", tint: Theme.bad)
+                    Notice(text: "The YoungWonks Focus helper is not answering on this Mac. Run the installer again from an administrator account."
+                           + (Paths.helperProblem().map { "\n(Detail: \($0), app \(AppVersion.installed).)" } ?? ""), tint: Theme.bad)
                 } else if linked {
                     linkedCard
                 } else {

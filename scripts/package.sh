@@ -80,7 +80,11 @@ exit 0
 POST
 chmod +x "$SCRIPTS/postinstall"
 
-pkgbuild --root "$STAGE" --scripts "$SCRIPTS" --identifier com.focussprint.pkg --version "$VERSION" \
+# By default the installer "relocates" an app: if another copy with the same identifier is anywhere on the Mac
+# (a download, a build folder), it updates that copy and puts nothing in Applications. Always install in place.
+pkgbuild --analyze --root "$STAGE" "$PARTS/components.plist" >/dev/null
+/usr/libexec/PlistBuddy -c "Set :0:BundleIsRelocatable false" -c "Set :0:BundleIsVersionChecked false" "$PARTS/components.plist"
+pkgbuild --root "$STAGE" --component-plist "$PARTS/components.plist" --scripts "$SCRIPTS" --identifier com.focussprint.pkg --version "$VERSION" \
          --install-location / --ownership recommended --filter '\.DS_Store$' "$PARTS/core.pkg" >/dev/null
 
 # The installer's own screens: what it does before, and the two steps left after.

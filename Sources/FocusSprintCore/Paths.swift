@@ -38,7 +38,8 @@ public enum Paths {
 
     /// Every login that has an area on this Mac.
     public static var knownUsers: [uid_t] {
-        ((try? FileManager.default.contentsOfDirectory(atPath: users.path)) ?? []).compactMap { uid_t($0) }.sorted()
+        // Never root itself: the installed helper runs as root, and root is not a person with records.
+        ((try? FileManager.default.contentsOfDirectory(atPath: users.path)) ?? []).compactMap { uid_t($0) }.filter { $0 != 0 }.sorted()
     }
 
     /// The Mac login name for a uid, e.g. "mia".
@@ -58,13 +59,40 @@ public enum Paths {
             try? fm.createDirectory(at: url, withIntermediateDirectories: true)
             chmod(url.path, mode_t(mode))
         }
-        guard fresh, getuid() == 0 else { return }
+        guard getuid() == 0, uid != 0, !opened.contains(uid) else { return }
         // Let that one login look inside; the files themselves are ordinary root-owned, read-only files.
-        let grant = Process()
-        grant.executableURL = URL(fileURLWithPath: "/bin/chmod")
-        grant.arguments = ["+a", "\(loginName(uid)) allow list,search,readattr,readextattr,readsecurity", home.path]
-        try? grant.run()
-        grant.waitUntilExit()
+        // Done once per helper run for every login, not only when the area is new, so an area that somehow
+        // lost the rule (or was made before it could be set) is repaired the next time the helper starts.
+        for arguments in [["-N", home.path],
+                          ["+a", "user:\(loginName(uid)) allow list,search,readattr,readextattr,readsecurity", home.path]] {
+            let grant = Process()
+            grant.executableURL = URL(fileURLWithPath: "/bin/chmod")
+            grant.arguments = arguments
+            let pipe = Pipe()
+            grant.standardError = pipe
+            guard (try? grant.run()) != nil else { lastGrantProblem = "could not run chmod"; return }
+            let said = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+            grant.waitUntilExit()
+            if grant.terminationStatus != 0 { lastGrantProblem = "chmod \(arguments[0]) for \(loginName(uid)): \(said.trimmingCharacters(in: .whitespacesAndNewlines))"; return }
+        }
+        _ = fresh
+        opened.insert(uid)
+    }
+    nonisolated(unsafe) private static var opened = Set<uid_t>()
+    /// Why a login could not be given access to its own area, for the helper's log. Nil when all is well.
+    nonisolated(unsafe) public static var lastGrantProblem: String?
+
+    /// What the app in the current login can see of the helper, in words, when something is wrong. Nil when fine.
+    public static func helperProblem() -> String? {
+        if !helperInstalled { return "not installed" }
+        if access(home.path, X_OK) != 0 {
+            return errno == ENOENT ? "the helper has not set up this login yet" : "this login is not allowed into its own records (\(String(cString: strerror(errno))))"
+        }
+        guard let status = HelperStatus.load() else {
+            return FileManager.default.fileExists(atPath: Paths.status.path) ? "the helper's status cannot be read" : "the helper has not reported for this login yet"
+        }
+        if !status.isFresh { return "the helper last reported \(Int(Date().timeIntervalSince(status.updatedAt))) seconds ago" }
+        return nil
     }
 }
 

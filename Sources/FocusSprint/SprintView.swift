@@ -11,6 +11,7 @@ struct SprintView: View {
     @State private var running: [AllowedApp] = []
     @State private var canRecord = CGPreflightScreenCaptureAccess()
     @State private var helperReady = Paths.helperInstalled
+    @State private var askedToRecord = false
     @State private var linked = HelperStatus.load()?.linked ?? true
 
     private var allowed: [AllowedApp] {
@@ -24,17 +25,28 @@ struct SprintView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 if !helperReady {
-                    Notice(text: "The YoungWonks Focus helper is not installed on this Mac. Run the installer once from an administrator account.", tint: Theme.bad)
+                    Notice(text: AppRelaunch.isInstalledCopy
+                           ? "The YoungWonks Focus helper is not installed on this Mac. Run the installer once from an administrator account."
+                           : "This copy of the app was opened from \(Bundle.main.bundleURL.deletingLastPathComponent().path), and the installer has not been run on this Mac. Run YoungWonksFocus.pkg, then use the app it puts in Applications.",
+                           tint: Theme.bad)
                 }
                 if helperReady && !linked {
                     Notice(text: "This Mac is not linked to a household yet. Sprints still work and are kept here; open Account to link it.",
                            tint: Theme.warn, icon: "link")
                 }
                 if !canRecord {
+                    // macOS decides this once per launch: after the switch is turned on, the app has to be reopened
+                    // before it can record. Asking again without reopening never succeeds.
                     HStack(spacing: 10) {
-                        Notice(text: "Screen Recording permission is needed so switches can be captured.", tint: Theme.warn)
-                        Button("Grant…") {
-                            CGRequestScreenCaptureAccess()
+                        Notice(text: askedToRecord
+                               ? "Turn on YoungWonks Focus in the list that opened, then choose Reopen. If it is already on and this message keeps coming back, select it there, remove it with the − button, choose Reopen, and allow it again."
+                               : "Screen Recording permission is needed so switches can be captured.", tint: Theme.warn)
+                        if askedToRecord {
+                            Button("Reopen") { AppRelaunch.now() }.keyboardShortcut(.defaultAction)
+                        }
+                        Button(askedToRecord ? "Open Settings" : "Grant…") {
+                            if !askedToRecord { CGRequestScreenCaptureAccess() }
+                            askedToRecord = true
                             NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")!)
                         }
                     }

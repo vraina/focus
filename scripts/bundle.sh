@@ -47,6 +47,9 @@ PLIST
 sed -i '' "s/__VERSION__/$VERSION/; s/__BUILD__/$BUILD_NUMBER/" "$APP/Contents/Info.plist"
 # A real signing identity keeps the Screen Recording permission across rebuilds; ad-hoc signing resets it.
 IDENTITY="${SIGN_ID:-$(security find-identity -v -p codesigning 2>/dev/null | awk 'NR==1 && $2 ~ /^[0-9A-F]{40}$/ {print $2}')}"
+# When this Mac has a Developer ID certificate, every build uses it, development builds included. macOS ties the
+# Screen Recording permission to who signed the app; switching between certificates makes it ask again and again.
+DEVELOPER_ID_APP="${DEVELOPER_ID_APP:-$(security find-identity -v -p codesigning 2>/dev/null | sed -n 's/.*"\(Developer ID Application: [^"]*\)".*/\1/p' | head -1)}"
 if [ -n "${DEVELOPER_ID_APP:-}" ]; then
     # For an installer other families download: Developer ID, hardened runtime and a timestamp, as notarisation requires.
     IDENTITY="$DEVELOPER_ID_APP"

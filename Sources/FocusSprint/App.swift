@@ -23,6 +23,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        if AppRelaunch.yieldToOtherCopy() { exit(0) }
         #if DEBUG
         if let folder = ProcessInfo.processInfo.environment["FOCUSSPRINT_SNAPSHOT"] {
             NSApp.setActivationPolicy(.accessory)

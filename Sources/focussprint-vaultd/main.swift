@@ -71,6 +71,10 @@ if getuid() == 0 {
     }
 }
 
+// Make sure every login that already has an area can read it (see Paths.prepareHome).
+for uid in Paths.knownUsers { Paths.prepareHome(for: uid) }
+if let problem = Paths.lastGrantProblem { log("could not open a login's area to it: \(problem)") }
+
 /// What the helper remembers about one Mac login between passes.
 struct LoginState {
     var identity: SiteSync.Identity?
@@ -88,6 +92,8 @@ Task {
         let stored = Vault.ingest(prepare: Paths.prepareHome(for:))
         let requests = sync.ingest()
         for (uid, count) in stored where count > 0 { log("stored \(count) new file(s) for \(Paths.loginName(uid))") }
+        if let problem = Paths.lastGrantProblem { log("could not open a login's area to it: \(problem)"); Paths.lastGrantProblem = nil }
+        for uid in requests.keys where states[uid] == nil { log("first heard from login \(Paths.loginName(uid))") }
         let service = SiteSync.config()
 
         for uid in Paths.knownUsers {
