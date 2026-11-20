@@ -24,6 +24,11 @@ final class SprintEngine: ObservableObject {
     @Published private(set) var phase: Phase = .idle
     /// Bumped twice a second so the timer, live counters and floating meter redraw.
     @Published private(set) var pulse = 0
+    /// Goes up each time a finished visit has been written to disk, so History can refresh at once.
+    @Published private(set) var savedVisits = 0
+    /// The screen is checked four times a second; the windows redraw on every second check.
+    static let tickSeconds = 0.25
+    private var ticks = 0
     @Published private(set) var lastSummary: SprintSummary?
     @Published private(set) var startError: String?
 
@@ -84,8 +89,8 @@ final class SprintEngine: ObservableObject {
     private var baseSwitches = 0
 
     private init() {
-        loadDay()
-        let timer = Timer(timeInterval: 0.5, repeats: true) { [weak self] _ in
+        Timing.measure("loadDay") { loadDay() }
+        let timer = Timer(timeInterval: SprintEngine.tickSeconds, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.tick() }
         }
         RunLoop.main.add(timer, forMode: .common)
@@ -207,7 +212,7 @@ final class SprintEngine: ObservableObject {
     }
 
     /// The floating meter stays hidden while the day is clean and appears once there is real distraction.
-    var meterVisible: Bool { todayAway >= 5 }
+    var meterVisible: Bool { awayNow != nil || todayAway > 0 }
 
     static func clock(_ seconds: TimeInterval) -> String {
         let s = Int(seconds.rounded(.up))
@@ -317,10 +322,18 @@ final class SprintEngine: ObservableObject {
     }
     #endif
 
+    private func noteVisitSaved() { savedVisits += 1 }
+
     // MARK: Watching
 
     private func tick() {
+        Timing.measure("tick") { tickBody() }
+    }
+
+    private func tickBody() {
         let now = Date()
+        // How late this tick is: anything well above zero means the main thread was busy with something else.
+        Timing.record("main thread delay", ms: max(0, now.timeIntervalSince(lastTick) - SprintEngine.tickSeconds) * 1000)
         let step = min(2, max(0, now.timeIntervalSince(lastTick))) // a long gap means the Mac slept: don't count it
         lastTick = now
         let today = Calendar.current.startOfDay(for: now)
@@ -332,7 +345,9 @@ final class SprintEngine: ObservableObject {
             searchesStamp = nil
             searchCounts = (0, 0, 0)
         }
-        if pulse % 4 == 0 {
+        ticks &+= 1
+        let wasAway = awayNow?.label
+        if ticks % 2 == 0 {
             reloadSitesIfChanged()
             collectAnswers()
             reloadSearchesIfChanged()
@@ -348,7 +363,8 @@ final class SprintEngine: ObservableObject {
         case .idle:
             observeAmbient(step: step)
         }
-        pulse &+= 1
+        // Redraw at once when the state flips, so the widget reacts within a quarter of a second.
+        if ticks % 2 == 0 || awayNow?.label != wasAway { pulse &+= 1 }
     }
 
     // MARK: All-day tracking (outside sprints)
@@ -361,7 +377,7 @@ final class SprintEngine: ObservableObject {
 
     private func observeAmbient(step: Double) {
         let now = Date()
-        if ambient == nil, pulse % 20 == 0 { config = ParentConfig.load() } // pick up parent changes within ~10s
+        if ambient == nil, ticks % 40 == 0 { config = ParentConfig.load() } // pick up parent changes within ~10s
         guard config.trackAllDay else {
             closeAmbient(quitting: false)
             return
@@ -484,12 +500,16 @@ final class SprintEngine: ObservableObject {
         if quitting {
             EventPersister.persistStills(job)
         } else {
-            Task.detached(priority: .utility) { await EventPersister.persist(job) }
+            Task.detached(priority: .utility) { [weak self] in
+                await EventPersister.persist(job)
+                await self?.noteVisitSaved()
+            }
         }
     }
 
     private func loadDay() {
-        let records = SprintReader.list(in: Paths.vault.appendingPathComponent("sprints"))
+        // Only today's folders are read, so this stays quick however much history is kept.
+        let records = SprintReader.list(in: Paths.vault.appendingPathComponent("sprints"), since: day)
         for record in records where record.start.startedAt >= day && (record.end != nil || record.interrupted || record.isAmbient) {
             baseSprint += record.elapsedSeconds
             baseAway += record.awaySeconds

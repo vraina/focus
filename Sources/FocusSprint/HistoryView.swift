@@ -29,7 +29,8 @@ struct HistoryView: View {
     @State private var selection: String?
     @State private var message: String?
     @State private var syncing = false
-    private let refreshTimer = Timer.publish(every: 5, on: .main, in: .common).autoconnect()
+    @State private var fingerprint = 0
+    private let refreshTimer = Timer.publish(every: 3, on: .main, in: .common).autoconnect()
 
     var body: some View {
         HStack(spacing: 0) {
@@ -72,7 +73,11 @@ struct HistoryView: View {
         .onAppear(perform: reload)
         .onChange(of: source) { _, _ in reload() }
         .onChange(of: engine.phase) { _, _ in
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5, execute: reload)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2, execute: reload)
+        }
+        // A visit was just saved: the helper files it within half a second, then it shows here.
+        .onChange(of: engine.savedVisits) { _, _ in
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8, execute: reload)
         }
         .onReceive(refreshTimer) { _ in if source == .local { reload() } }
     }
@@ -81,8 +86,27 @@ struct HistoryView: View {
         switch source {
         case .local:
             message = nil
-            show(SprintReader.listForDisplay(in: Paths.vault.appendingPathComponent("sprints")))
+            let folder = Paths.vault.appendingPathComponent("sprints")
+            let known = fingerprint
+            // Reading and decoding happens off the main thread, and only when something on disk changed.
+            Task.detached(priority: .userInitiated) {
+                // Labels and searches live in their own files, so their change times count too.
+                var hasher = Hasher()
+                hasher.combine(SprintReader.fingerprint(of: folder))
+                for file in [Paths.searches, Paths.sites] {
+                    hasher.combine(((try? FileManager.default.attributesOfItem(atPath: file.path))?[.modificationDate] as? Date)?.timeIntervalSince1970)
+                }
+                let current = hasher.finalize()
+                guard current != known else { return }
+                let list = SprintReader.listForDisplay(in: folder)
+                await MainActor.run {
+                    guard source == .local else { return }
+                    fingerprint = current
+                    show(list)
+                }
+            }
         case .cloud:
+            fingerprint = 0
             show(SprintReader.listForDisplay(in: CloudCache.sprints))
             guard let store = CloudCache.store else {
                 message = "Add a read-only Atlas connection string under Parent settings to view cloud history."
@@ -155,6 +179,15 @@ struct SprintDetail: View {
     var source: HistorySource
     var sites = SiteBook()
     var searches: [SearchEntry] = []
+    @EnvironmentObject private var engine: SprintEngine
+
+    /// The visit that is still going on, if it belongs on this page (today's summary, or the running sprint).
+    private var liveVisit: (label: String, since: Date)? {
+        guard source == .local, let away = engine.awayNow else { return nil }
+        let today = Calendar.current.isDateInToday(record.start.startedAt)
+        let mine = record.isAmbient ? today : (record.end == nil && !record.interrupted && engine.phase == .running)
+        return mine ? (away.label, away.since) : nil
+    }
 
     /// Searches made during this sprint, or on this day for the all-day record.
     private var ownSearches: [SearchEntry] {
@@ -177,7 +210,8 @@ struct SprintDetail: View {
     var body: some View {
         let distracted = 1 - Double(record.focusPercent) / 100
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
+            // Lazy: cards and their pictures are only built as they scroll into view.
+            LazyVStack(alignment: .leading, spacing: 16) {
                 VStack(alignment: .leading, spacing: 6) {
                     HStack(spacing: 10) {
                         Text(record.start.task).font(Theme.title(26))
@@ -223,7 +257,22 @@ struct SprintDetail: View {
 
                 if !ownSearches.isEmpty { SearchCard(entries: ownSearches) }
 
-                if record.events.isEmpty {
+                if let live = liveVisit {
+                    let _ = engine.pulse
+                    HStack(spacing: 10) {
+                        Image(systemName: "dot.radiowaves.left.and.right").font(.system(size: 16, weight: .semibold)).foregroundStyle(.white)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text("Happening now: \(live.label)").font(.system(size: 14, weight: .bold)).foregroundStyle(.white)
+                            Text("It is added to the list below as soon as you leave it.").font(.system(size: 12)).foregroundStyle(.white.opacity(0.85))
+                        }
+                        Spacer()
+                        Text(SprintEngine.clock(Date().timeIntervalSince(live.since))).font(Theme.number(20)).foregroundStyle(.white)
+                    }
+                    .padding(14)
+                    .background(Theme.bad, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                }
+
+                if record.events.isEmpty && liveVisit == nil {
                     HStack(spacing: 10) {
                         Image(systemName: "checkmark.seal.fill").font(.system(size: 20)).foregroundStyle(Theme.good)
                         Text(record.isAmbient ? "No distractions recorded this day." : "No switches away during this sprint. Nice work.")
@@ -231,9 +280,10 @@ struct SprintDetail: View {
                         Spacer()
                     }
                     .card()
-                } else {
-                    SectionLabel(text: record.isAmbient ? "Every switch away, all day" : "Every switch away").padding(.top, 4)
-                    ForEach(record.events) { event in
+                } else if !record.events.isEmpty {
+                    SectionLabel(text: record.isAmbient ? "Every switch away, all day · newest first" : "Every switch away · newest first")
+                        .padding(.top, 4)
+                    ForEach(record.events.reversed()) { event in
                         // A combined day spans several stored sessions, so each event's files are looked up by its own session.
                         EventCard(event: event,
                                   directory: record.directory.deletingLastPathComponent().appendingPathComponent(event.sprintId),
@@ -274,7 +324,7 @@ struct SearchCard: View {
 
     var body: some View {
         let counts = SearchLog.counts(entries)
-        let offTopic = entries.filter { $0.label == "distraction" }
+        let offTopic = Array(entries.filter { $0.label == "distraction" }.reversed()) // newest first
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
                 SectionLabel(text: "Web searches")
@@ -410,6 +460,32 @@ struct EventCard: View {
     }
 }
 
+/// Small versions of the captured pictures. A full-size screenshot is several megabytes once decoded;
+/// History only needs a preview, made once off the main thread and then kept in memory.
+enum Thumbnails {
+    private static let cache: NSCache<NSURL, NSImage> = {
+        let cache = NSCache<NSURL, NSImage>()
+        cache.countLimit = 300
+        return cache
+    }()
+
+    static func cached(_ url: URL) -> NSImage? { cache.object(forKey: url as NSURL) }
+
+    static func load(_ url: URL, maxPixels: Int = 900) async -> NSImage? {
+        if let hit = cached(url) { return hit }
+        return await Task.detached(priority: .userInitiated) { () -> NSImage? in
+            let options: [CFString: Any] = [kCGImageSourceCreateThumbnailFromImageAlways: true,
+                                            kCGImageSourceThumbnailMaxPixelSize: maxPixels,
+                                            kCGImageSourceCreateThumbnailWithTransform: true]
+            guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+                  let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { return nil }
+            let result = NSImage(cgImage: image, size: NSSize(width: image.width / 2, height: image.height / 2))
+            cache.setObject(result, forKey: url as NSURL)
+            return result
+        }.value
+    }
+}
+
 struct MediaView: View {
     var ref: MediaRef
     var sprintId: String
@@ -417,19 +493,18 @@ struct MediaView: View {
     var source: HistorySource
     @State private var ready = false
     @State private var failed = false
+    @State private var preview: NSImage?
 
     private var url: URL { directory.appendingPathComponent(ref.file) }
 
     var body: some View {
         Group {
-            if ready {
-                if ref.kind == .video {
-                    VideoPlayer(player: AVPlayer(url: url))
-                } else if let image = NSImage(contentsOf: url) {
-                    Image(nsImage: image).resizable().aspectRatio(contentMode: .fit)
-                        .onTapGesture { NSWorkspace.shared.open(url) }
-                        .help("Click to open full size")
-                }
+            if ready, ref.kind == .video {
+                VideoPlayer(player: AVPlayer(url: url))
+            } else if let preview {
+                Image(nsImage: preview).resizable().aspectRatio(contentMode: .fit)
+                    .onTapGesture { NSWorkspace.shared.open(url) }
+                    .help("Click to open full size")
             } else {
                 RoundedRectangle(cornerRadius: 10).fill(Color.primary.opacity(0.06))
                     .overlay(Text(failed ? "Not available yet" : "Loading…").font(.system(size: 12)).foregroundStyle(.secondary))
@@ -437,21 +512,25 @@ struct MediaView: View {
         }
         .frame(maxWidth: 380)
         // Pictures keep their own shape; clips and placeholders get a fixed box.
-        .frame(height: ready && ref.kind == .image ? nil : 220)
+        .frame(height: preview != nil && ref.kind == .image ? nil : 220)
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Theme.hairline))
         .task(id: url) { await load() }
     }
 
     private func load() async {
+        preview = Thumbnails.cached(url)
         ready = FileManager.default.fileExists(atPath: url.path)
         failed = false
-        guard !ready else { return }
-        guard source == .cloud, let store = CloudCache.store else { failed = true; return }
-        if let data = try? await store.media(sprintId: sprintId, file: ref.file), (try? data.write(to: url, options: .atomic)) != nil {
+        if !ready {
+            guard source == .cloud, let store = CloudCache.store else { failed = true; return }
+            guard let data = try? await store.media(sprintId: sprintId, file: ref.file),
+                  (try? data.write(to: url, options: .atomic)) != nil else { failed = true; return }
             ready = true
-        } else {
-            failed = true
+        }
+        if ref.kind == .image, preview == nil {
+            preview = await Thumbnails.load(url)
+            failed = preview == nil
         }
     }
 }

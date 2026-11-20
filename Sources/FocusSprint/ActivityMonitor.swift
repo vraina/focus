@@ -25,6 +25,10 @@ final class ActivityMonitor {
     private(set) var frontDisplay: CGDirectDisplayID = CGMainDisplayID()
 
     func current() -> ActivityContext? {
+        Timing.measure("read front app and tab") { readCurrent() }
+    }
+
+    private func readCurrent() -> ActivityContext? {
         guard let app = NSWorkspace.shared.frontmostApplication else { return nil }
         let bundleId = app.bundleIdentifier ?? "pid.\(app.processIdentifier)"
         let name = app.localizedName ?? bundleId

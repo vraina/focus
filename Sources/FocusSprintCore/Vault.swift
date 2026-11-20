@@ -163,11 +163,21 @@ public struct SprintRecord: Identifiable, Sendable {
 }
 
 public enum SprintReader {
-    public static func list(in sprintsDir: URL) -> [SprintRecord] {
+    /// `since`: skip sessions from before that day. Session folders start with their local date
+    /// (yyyyMMdd), so older ones are ruled out by name without opening any file.
+    public static func list(in sprintsDir: URL, since: Date? = nil) -> [SprintRecord] {
         let fm = FileManager.default
         let dec = JSONCoding.decoder
         var out: [SprintRecord] = []
+        var floor: String?
+        if let since {
+            let stamp = DateFormatter()
+            stamp.dateFormat = "yyyyMMdd"
+            stamp.locale = Locale(identifier: "en_US_POSIX")
+            floor = stamp.string(from: since)
+        }
         for name in (try? fm.contentsOfDirectory(atPath: sprintsDir.path)) ?? [] {
+            if let floor, name.prefix(8) < floor { continue }
             let dir = sprintsDir.appendingPathComponent(name)
             guard let data = try? Data(contentsOf: dir.appendingPathComponent("start.json")),
                   let start = try? dec.decode(SprintStart.self, from: data) else { continue }
@@ -181,6 +191,18 @@ public enum SprintReader {
             out.append(SprintRecord(start: start, end: end, events: events, directory: dir))
         }
         return out.sorted { $0.start.startedAt > $1.start.startedAt }
+    }
+
+    /// A cheap summary of what is on disk (folder names and file counts). Records are append-only,
+    /// so an unchanged fingerprint means there is nothing new to read.
+    public static func fingerprint(of sprintsDir: URL) -> Int {
+        let fm = FileManager.default
+        var hasher = Hasher()
+        for name in ((try? fm.contentsOfDirectory(atPath: sprintsDir.path)) ?? []).sorted() {
+            hasher.combine(name)
+            hasher.combine(((try? fm.contentsOfDirectory(atPath: sprintsDir.appendingPathComponent(name).path)) ?? []).count)
+        }
+        return hasher.finalize()
     }
 
     /// Sprints as they are, plus one "All day" record per calendar day that covers everything tracked

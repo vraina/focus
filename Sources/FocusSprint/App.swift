@@ -13,8 +13,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         #endif
+        Timing.mark("didFinishLaunching")
         NSApp.setActivationPolicy(.regular)
         meter = MeterPanelController(engine: SprintEngine.shared)
+        Timing.mark("engine and widget ready")
         NSApp.activate(ignoringOtherApps: true)
         #if DEBUG
         // Development only: FOCUSSPRINT_AUTOSTART=<minutes> starts a sprint without touching the UI.
@@ -90,7 +92,7 @@ enum Pane: String, CaseIterable, Identifiable {
 
 struct ContentView: View {
     @EnvironmentObject var engine: SprintEngine
-    @State var pane: Pane = .focus
+    @State var pane: Pane = Pane(rawValue: ProcessInfo.processInfo.environment["FOCUSSPRINT_PANE"] ?? "") ?? .focus
 
     var body: some View {
         HStack(spacing: 0) {
@@ -106,6 +108,7 @@ struct ContentView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .background(Theme.canvas)
+        .onAppear { Timing.mark("main window appeared") }
     }
 
     private var sidebar: some View {

@@ -151,6 +151,7 @@ def test_daily_digest(ctx):
     body = mail["body"]
     assert "&lt;b&gt;for class&lt;/b&gt;" in body  # the student's words, escaped
     assert "Approved for a while" in body and "for 45 min" in body and "Not approved" in body
+    assert body.index("i need it") < body.index("Physics lecture")  # newest request first
     assert "A lecture is a real need." in body and "khanacademy.org" in body
     assert "https://focus.example.com/decide?t=" in body and "a=block" not in body
 

@@ -153,7 +153,7 @@ def create_app(db=None, classify=classifier.classify, review=classifier.review_r
         moment = datetime.now(timezone.utc)
         day = local_day(moment)
         entry = {"_id": request_id, "host": host, "reason": reason, "requestedMinutes": minutes,
-                 "wantsPermanent": wants_permanent, "at": iso(moment), "day": day,
+                 "wantsPermanent": wants_permanent, "at": iso(moment), "ts": moment.timestamp(), "day": day,
                  "localTime": moment.astimezone(zone).strftime("%-I:%M %p"),
                  "who": f"{str(body.get('user') or 'Your child')[:60]} on {str(body.get('device') or 'their Mac')[:80]}",
                  "grantedMinutes": 0}
@@ -218,7 +218,7 @@ def create_app(db=None, classify=classifier.classify, review=classifier.review_r
         if verdict is None:
             return jsonify(error="not labelled yet"), 503  # the helper keeps the request and retries
         moment = datetime.now(timezone.utc)
-        entry = {"_id": search_id, "at": iso(moment), "day": local_day(moment),
+        entry = {"_id": search_id, "at": iso(moment), "ts": moment.timestamp(), "day": local_day(moment),
                  "localTime": moment.astimezone(zone).strftime("%-I:%M %p"),
                  "who": f"{str(body.get('user') or 'Your child')[:60]} on {str(body.get('device') or 'their Mac')[:80]}",
                  "engine": clean_host(body.get("engine")) or "", "label": verdict["label"], "inSprint": bool(task)}
@@ -242,10 +242,11 @@ def create_app(db=None, classify=classifier.classify, review=classifier.review_r
             except DuplicateKeyError:
                 return "already handled"
         start = datetime.strptime(day, "%Y-%m-%d").replace(tzinfo=zone)
-        entries = list(requests_log.find({"day": day}).sort("at", 1))
+        # Everything in the summary is listed newest first.
+        entries = list(requests_log.find({"day": day}).sort([("at", -1), ("ts", -1)]))
         new_sites = list(sites.find({"source": "ai", "createdAt": {"$gte": iso(start), "$lt": iso(start + timedelta(days=1))}})
-                         .sort("_id", 1).limit(200))
-        day_searches = list(searches.find({"day": day}).sort("at", 1))
+                         .sort("createdAt", -1).limit(200))
+        day_searches = list(searches.find({"day": day}).sort([("at", -1), ("ts", -1)]))
         counts = {label: sum(1 for x in day_searches if x["label"] == label) for label in ("work", "distraction", "personal")}
         off_topic = [x for x in day_searches if x["label"] == "distraction"]
         # A day of nothing but schoolwork searches is not worth an email.
