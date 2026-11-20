@@ -240,7 +240,7 @@ public final class SiteSync {
     /// Pulls every label, which is how the parent's decisions reach the Mac.
     public func refresh(_ config: ServiceConfig) async throws {
         let (data, status) = try await call(config, path: "/api/sites", json: nil)
-        guard status == 200 else { throw URLError(.badServerResponse) }
+        guard status == 200 else { throw URLError(status == 401 ? .userAuthenticationRequired : .badServerResponse) }
         let list = try JSONDecoder().decode(SiteList.self, from: data)
         write(SiteBook(entries: list.sites))
     }

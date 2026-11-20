@@ -135,16 +135,23 @@ struct SettingsView: View {
             }
             Section("Cloud storage (MongoDB Atlas)") {
                 LabeledContent("Upload status", value: statusText)
-                field("Connection string for the insert-only user", hint: "Leave blank to keep the current one",
-                      placeholder: "mongodb+srv://user:password@cluster.mongodb.net/focus", text: $mongoURI, secret: true)
+                field("Connection string for the insert-only user",
+                      hint: status?.mongoConfigured == true ? "One is saved. It is never shown again; leave blank to keep it." : "None saved yet",
+                      placeholder: status?.mongoConfigured == true ? "Saved, hidden. Paste a new one to replace it"
+                                                                   : "mongodb+srv://user:password@cluster.mongodb.net/focus",
+                      text: $mongoURI, secret: true)
                 Text("Stored where only an administrator can read it. Records wait on this Mac until Atlas confirms each one.")
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section("Website labels and parent emails") {
-                field("Family service address", hint: "Fill in both, or leave both blank to keep the current ones",
+                LabeledContent("Service status", value: serviceStatusText)
+                field("Family service address", hint: "To change the address or the token, fill in both",
                       placeholder: "https://your-service.onrender.com", text: $serviceURL, secret: false)
-                field("Device token", hint: "The DEVICE_TOKEN value from the service's environment settings",
-                      placeholder: "Paste the token here", text: $deviceToken, secret: true)
+                field("Device token",
+                      hint: status?.serviceURL != nil ? "One is saved. It is never shown again; leave blank to keep it."
+                                                      : "The DEVICE_TOKEN value from the service's environment settings",
+                      placeholder: status?.serviceURL != nil ? "Saved, hidden. Paste a new one to replace it" : "Paste the token here",
+                      text: $deviceToken, secret: true)
                 Text("New websites are labelled productive or distraction by Claude through this service. It also reviews \"needed for work\" requests and emails you one summary at the end of each day. Nothing is ever blocked.")
                     .font(.caption).foregroundStyle(.secondary)
             }
@@ -172,8 +179,13 @@ struct SettingsView: View {
             config = ParentConfig.load()
             domainsText = config.distractionDomains.joined(separator: "\n")
             appsText = config.distractionApps.joined(separator: "\n")
+            status = HelperStatus.load()
+            if serviceURL.isEmpty, let saved = status?.serviceURL { serviceURL = saved }
         }
-        .onReceive(statusTimer) { _ in status = HelperStatus.load() }
+        .onReceive(statusTimer) { _ in
+            status = HelperStatus.load()
+            if serviceURL.isEmpty, let saved = status?.serviceURL { serviceURL = saved }
+        }
     }
 
     /// A label above a full-width box. (A plain Form text field puts its title on the left and leaves
@@ -195,6 +207,13 @@ struct SettingsView: View {
         .padding(.vertical, 2)
     }
 
+    private var serviceStatusText: String {
+        guard let status, status.isFresh else { return "Vault helper is not running" }
+        guard let address = status.serviceURL else { return "Not set up" }
+        if let problem = status.serviceProblem { return "Saved, but not working: \(problem)" }
+        return "Connected to \(address)"
+    }
+
     private var statusText: String {
         guard let status, status.isFresh else { return "Vault helper is not running" }
         if !status.mongoConfigured { return "No connection string yet · \(status.pending) item(s) waiting on this Mac" }
@@ -213,6 +232,12 @@ struct SettingsView: View {
             }
             let address = serviceURL.trimmingCharacters(in: .whitespacesAndNewlines)
             let token = deviceToken.trimmingCharacters(in: .whitespacesAndNewlines)
+            // The saved token cannot be read back, so a changed address needs the token typed again.
+            if token.isEmpty, !address.isEmpty, address != status?.serviceURL {
+                message = "Enter the device token as well: the address and the token are saved together."
+                messageIsError = true
+                return
+            }
             if !address.isEmpty, !token.isEmpty {
                 items.append(AdminWriter.Item(data: try JSONEncoder().encode(ServiceConfig(serviceURL: address, deviceToken: token)),
                                               destination: Paths.service, mode: "600"))
@@ -220,7 +245,7 @@ struct SettingsView: View {
             try AdminWriter.install(items)
             mongoURI = ""
             deviceToken = ""
-            message = "Saved. Applies from the next sprint."
+            message = "Saved. The token and connection string are hidden once saved; the status lines above show whether they work."
             messageIsError = false
         } catch {
             message = error.localizedDescription

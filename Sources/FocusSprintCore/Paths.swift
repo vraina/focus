@@ -31,10 +31,15 @@ public struct HelperStatus: Codable, Sendable {
     public var lastUploadAt: Date?
     public var lastError: String?
     public var updatedAt: Date
+    /// Address of the family service, when one is saved. The token itself is never exposed here.
+    public var serviceURL: String?
+    public var serviceProblem: String?
 
-    public init(mongoConfigured: Bool, pending: Int, lastUploadAt: Date?, lastError: String?, updatedAt: Date) {
+    public init(mongoConfigured: Bool, pending: Int, lastUploadAt: Date?, lastError: String?, updatedAt: Date,
+                serviceURL: String? = nil, serviceProblem: String? = nil) {
         self.mongoConfigured = mongoConfigured; self.pending = pending
         self.lastUploadAt = lastUploadAt; self.lastError = lastError; self.updatedAt = updatedAt
+        self.serviceURL = serviceURL; self.serviceProblem = serviceProblem
     }
 
     public static func load() -> HelperStatus? {

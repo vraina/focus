@@ -74,6 +74,8 @@ siteSync.ensureDirectories()
 
 Task {
     var pass = 0
+    var serviceProblem: String?
+    var serviceChecked = false
     while true {
         let accepted = vault.ingestInbox()
         if accepted > 0 { log("stored \(accepted) new file(s)") }
@@ -83,7 +85,9 @@ Task {
             await uploader.drain(vault)
         }
         if pass % 6 == 0 {
-            let status = await uploader.status(pending: vault.pendingItems().count)
+            var status = await uploader.status(pending: vault.pendingItems().count)
+            status.serviceURL = SiteSync.config()?.serviceURL
+            status.serviceProblem = serviceProblem
             if let data = try? JSONCoding.encoder.encode(status) {
                 try? data.write(to: Paths.status, options: .atomic)
                 chmod(Paths.status.path, 0o644)
@@ -91,11 +95,24 @@ Task {
         }
         // Site labels: send new requests straight away, retry the queue and pull parent decisions once a minute.
         let newRequests = siteSync.ingest()
-        if let service = SiteSync.config(), newRequests > 0 || pass % 120 == 0 {
+        if let service = SiteSync.config(), newRequests > 0 || pass % 120 == 0 || !serviceChecked {
             if siteSync.pendingCount > 0, let problem = await siteSync.drain(service) {
                 if pass % 1200 == 0 { log("family service unreachable: \(problem)") }
             }
-            if pass % 120 == 0 { try? await siteSync.refresh(service) }
+            if pass % 120 == 0 || !serviceChecked {
+                // Doubles as the connection check shown in Parent settings.
+                do {
+                    try await siteSync.refresh(service)
+                    serviceProblem = nil
+                } catch {
+                    serviceProblem = (error as? URLError)?.code == .userAuthenticationRequired
+                        ? "the device token was not accepted" : error.localizedDescription
+                }
+                serviceChecked = true
+            }
+        } else if SiteSync.config() == nil {
+            serviceChecked = false // a newly saved address is checked straight away
+            serviceProblem = nil
         }
         if pass % 7200 == 0 { vault.prune(keepDays: ParentConfig.load().keepLocalDays) }
         pass += 1
