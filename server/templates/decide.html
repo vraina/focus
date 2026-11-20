@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Decide: {{ site.host }} · YoungWonks Focus{% endblock %}
+{% block body %}
+<div style="max-width:520px;margin:4vh auto 0"><div class="card" style="padding:24px">
+  <h1 style="font-size:22px">{{ site.host }}</h1>
+  <p class="muted" style="margin:0 0 10px">Currently: {{ state }}</p>
+  {% if active %}<p class="muted small">Approved for now: {{ active|join(", ") }}</p>{% endif %}
+  {% if site.reason %}<p class="muted small" style="margin-bottom:2px">Why it was labelled</p><p style="margin-top:0">{{ site.reason }}</p>{% endif %}
+  {% for r in recent %}
+    <p class="muted small" style="margin-bottom:2px">{{ r.day }} {{ r.localTime }} · {{ r.who }} · {{ r.decisionLabel }}</p>
+    <div style="margin:0 0 10px;padding:9px 11px;background:var(--canvas);border-radius:8px">{{ r.reason }}</div>
+  {% endfor %}
+  <form method="post" action="{{ url_for('decide') }}">
+    <input type="hidden" name="t" value="{{ token }}">
+    {% for key, pair in choices.items() %}
+    <button name="a" value="{{ key }}" class="btn" style="display:block;width:100%;margin-top:10px;text-align:center;
+      background:{{ 'var(--good)' if key == 'allow' else 'var(--warn)' }};{{ 'outline:3px solid var(--ink);outline-offset:2px' if key == picked }}">
+      {{ pair[0] }}<span style="display:block;font-weight:400;font-size:13px;opacity:.9">{{ pair[1] }}</span></button>
+    {% endfor %}
+  </form>
+  <p class="muted small" style="margin-bottom:0">Nothing is blocked either way. This only changes whether time on the site counts as distraction.</p>
+</div></div>
+{% endblock %}

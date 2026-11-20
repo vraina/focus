@@ -152,11 +152,7 @@ struct MediaViewerOverlay: View {
         image = Thumbnails.cached(item.url) // show the preview at once, then sharpen
         player = nil
         failed = false
-        if !FileManager.default.fileExists(atPath: item.url.path) {
-            guard item.source == .cloud, let store = CloudCache.store,
-                  let data = try? await store.media(sprintId: item.event.sprintId, file: item.ref.file),
-                  (try? data.write(to: item.url, options: .atomic)) != nil else { failed = true; return }
-        }
+        guard FileManager.default.fileExists(atPath: item.url.path) else { failed = true; return }
         if item.ref.kind == .video {
             let made = AVPlayer(url: item.url)
             player = made

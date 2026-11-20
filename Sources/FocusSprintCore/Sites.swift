@@ -106,8 +106,10 @@ public extension Paths {
     static var outbox: URL { vault.appendingPathComponent("outbox", isDirectory: true) }
     static var sites: URL { vault.appendingPathComponent("sites.json") }
     static var answers: URL { vault.appendingPathComponent("answers.json") }
-    /// Root-only: address and token of the family service.
+    /// Root-only: this Mac's token for the family service. Its presence is what "linked" means.
     static var service: URL { root.appendingPathComponent("service.json") }
+    /// The answer to the latest pairing attempt, for the app to show.
+    static var pairing: URL { vault.appendingPathComponent("pairing.json") }
 }
 
 public struct ServiceConfig: Codable, Sendable {
@@ -116,10 +118,37 @@ public struct ServiceConfig: Codable, Sendable {
     public init(serviceURL: String, deviceToken: String) {
         self.serviceURL = serviceURL; self.deviceToken = deviceToken
     }
+
+    /// Where the family service lives. Built in, so nobody has to type an address; a developer can
+    /// point a test build elsewhere with FOCUSSPRINT_SERVICE_URL or a `service-url` file.
+    public static var baseURL: String {
+        if let override = ProcessInfo.processInfo.environment["FOCUSSPRINT_SERVICE_URL"], !override.isEmpty { return override }
+        if let file = try? String(contentsOf: Paths.root.appendingPathComponent("service-url"), encoding: .utf8) {
+            let trimmed = file.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.hasPrefix("http") { return trimmed }
+        }
+        return "https://focus-c0tf.onrender.com"
+    }
+}
+
+/// What came back from a pairing attempt.
+public struct PairingResult: Codable, Sendable {
+    public var id: String
+    public var ok: Bool
+    public var message: String
+
+    public static func load() -> PairingResult? {
+        (try? Data(contentsOf: Paths.pairing)).flatMap { try? JSONDecoder().decode(PairingResult.self, from: $0) }
+    }
+}
+
+public enum ServiceError: Error {
+    /// The service does not accept this Mac's token (the parent removed the computer, or the link is broken).
+    case notLinked
 }
 
 public struct SiteRequest: Codable, Sendable {
-    public var kind: String // "classify", "dispute" or "search"
+    public var kind: String // "classify", "dispute", "search" or "pair"
     public var host: String
     public var reason: String?
     public var user: String?
@@ -131,13 +160,20 @@ public struct SiteRequest: Codable, Sendable {
     /// Searches only: the search words, and the sprint task they were made during (if any).
     public var query: String?
     public var task: String?
+    /// Pairing only: the one-time code from the parent's website.
+    public var code: String?
 
     public init(kind: String, host: String, reason: String? = nil, user: String? = nil, device: String? = nil,
                 id: String? = nil, minutes: Int? = nil, permanent: Bool? = nil, onParentList: Bool? = nil,
-                query: String? = nil, task: String? = nil) {
+                query: String? = nil, task: String? = nil, code: String? = nil) {
         self.kind = kind; self.host = host; self.reason = reason; self.user = user; self.device = device
         self.id = id; self.minutes = minutes; self.permanent = permanent; self.onParentList = onParentList
-        self.query = query; self.task = task
+        self.query = query; self.task = task; self.code = code
+    }
+
+    /// A request to link this Mac. `host` is only a placeholder that satisfies the file-name rules.
+    public static func pairing(code: String, deviceName: String, id: String) -> SiteRequest {
+        SiteRequest(kind: "pair", host: "pair.youngwonks.app", device: deviceName, id: id, code: code)
     }
 
     public static func isValidHost(_ host: String) -> Bool {
@@ -189,14 +225,14 @@ public final class SiteSync {
             let src = Paths.requests.appendingPathComponent(name)
             if name.hasPrefix(".tmp-") { continue }
             defer { unlink(src.path) }
-            guard name.range(of: #"^(classify|dispute|search)-[a-z0-9.-]{1,260}\.json$"#, options: .regularExpression) != nil else { continue }
+            guard name.range(of: #"^(classify|dispute|search|pair)-[a-z0-9.-]{1,260}\.json$"#, options: .regularExpression) != nil else { continue }
             let fd = open(src.path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK)
             guard fd >= 0 else { continue }
             let handle = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
             var st = stat()
             guard fstat(fd, &st) == 0, (st.st_mode & S_IFMT) == S_IFREG, st.st_size > 0, st.st_size < 8192,
                   let data = try? handle.readToEnd(), let req = try? JSONDecoder().decode(SiteRequest.self, from: data),
-                  SiteRequest.isValidHost(req.host), ["classify", "dispute", "search"].contains(req.kind) else { continue }
+                  SiteRequest.isValidHost(req.host), ["classify", "dispute", "search", "pair"].contains(req.kind) else { continue }
             let dest = Paths.outbox.appendingPathComponent(name)
             if !fm.fileExists(atPath: dest.path), (try? data.write(to: dest, options: .atomic)) != nil {
                 chmod(dest.path, 0o600)
@@ -206,11 +242,96 @@ public final class SiteSync {
         return accepted
     }
 
-    public var pendingCount: Int { ((try? fm.contentsOfDirectory(atPath: Paths.outbox.path)) ?? []).count }
+    public var pendingCount: Int {
+        ((try? fm.contentsOfDirectory(atPath: Paths.outbox.path)) ?? []).filter { !$0.hasPrefix("pair-") }.count
+    }
+
+    // MARK: Linking this Mac to a parent's account
+
+    /// Handles a waiting pairing request, if there is one. On success this Mac's own token is saved
+    /// where only root can read it, and from then on the Mac counts as linked.
+    public func pairIfRequested() async {
+        let waiting = ((try? fm.contentsOfDirectory(atPath: Paths.outbox.path)) ?? []).filter { $0.hasPrefix("pair-") }.sorted()
+        guard let name = waiting.last else { return }
+        for other in waiting { if other != name { unlink(Paths.outbox.appendingPathComponent(other).path) } }
+        let file = Paths.outbox.appendingPathComponent(name)
+        defer { unlink(file.path) }
+        guard let data = try? Data(contentsOf: file), let req = try? JSONDecoder().decode(SiteRequest.self, from: data) else { return }
+        let id = req.id ?? name
+        // Linking again while linked would let anyone at the keyboard move this Mac to another account.
+        // Unlinking takes the administrator password; only then can a new code be used.
+        if SiteSync.config() != nil {
+            report(PairingResult(id: id, ok: false, message: "This Mac is already linked. Unlink it first (administrator password needed)."))
+            return
+        }
+        let base = ServiceConfig.baseURL
+        do {
+            let open = ServiceConfig(serviceURL: base, deviceToken: "")
+            let (reply, status) = try await call(open, path: "/api/pair", json: ["code": req.code ?? "", "name": req.device ?? "Mac"])
+            let object = (try? JSONSerialization.jsonObject(with: reply)) as? [String: Any]
+            if status == 200, let token = object?["token"] as? String, !token.isEmpty {
+                let saved = try JSONEncoder().encode(ServiceConfig(serviceURL: base, deviceToken: token))
+                try saved.write(to: Paths.service, options: .atomic)
+                chmod(Paths.service.path, 0o600)
+                let member = (object?["member"] as? [String: Any])?["name"] as? String
+                report(PairingResult(id: id, ok: true, message: "Linked\(member.map { " as \($0)'s computer" } ?? "")."))
+            } else {
+                report(PairingResult(id: id, ok: false, message: (object?["error"] as? String) ?? "The code was not accepted."))
+            }
+        } catch {
+            report(PairingResult(id: id, ok: false, message: "Could not reach the service. Check the internet connection and try again."))
+        }
+    }
+
+    private func report(_ result: PairingResult) {
+        guard let data = try? JSONEncoder().encode(result) else { return }
+        try? data.write(to: Paths.pairing, options: .atomic)
+        chmod(Paths.pairing.path, 0o644)
+    }
+
+    // MARK: Sending records and fetching the parent's settings
+
+    /// Sends one stored record or picture. Returns false when it should be tried again later.
+    public func upload(_ item: PendingItem, _ config: ServiceConfig) async throws -> Bool {
+        guard let payload = try? Data(contentsOf: item.source) else { return true } // nothing to send
+        guard let url = URL(string: config.serviceURL.trimmingCharacters(in: CharacterSet(charactersIn: "/ "))
+                            + "/api/upload/\(item.sprintId)/\(item.file)") else { return true }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 120
+        request.setValue("Bearer \(config.deviceToken)", forHTTPHeaderField: "Authorization")
+        request.setValue(item.file.hasSuffix(".json") ? "application/json" : "application/octet-stream", forHTTPHeaderField: "Content-Type")
+        let (_, response) = try await session.upload(for: request, from: payload)
+        switch (response as? HTTPURLResponse)?.statusCode ?? 0 {
+        case 200: return true
+        case 401: throw ServiceError.notLinked
+        case 400, 409, 413: return true // the service will never accept this file: do not block the queue behind it
+        default: return false
+        }
+    }
+
+    /// Fetches the settings that apply to this Mac's member and writes them where the app reads them.
+    /// Returns who this Mac is linked to.
+    public func fetchSettings(_ config: ServiceConfig) async throws -> (account: String, device: String, member: String, kind: String) {
+        let (data, status) = try await call(config, path: "/api/config", json: nil)
+        if status == 401 { throw ServiceError.notLinked }
+        guard status == 200, let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
+            throw URLError(.badServerResponse)
+        }
+        if let settings = object["settings"] as? [String: Any],
+           let encoded = try? JSONSerialization.data(withJSONObject: settings, options: [.sortedKeys, .prettyPrinted]),
+           (try? JSONCoding.decoder.decode(ParentConfig.self, from: encoded)) != nil {
+            try? encoded.write(to: Paths.config, options: .atomic)
+            chmod(Paths.config.path, 0o644)
+        }
+        let member = object["member"] as? [String: Any]
+        return ((object["account"] as? String) ?? "", (object["device"] as? String) ?? "",
+                (member?["name"] as? String) ?? "", (member?["kind"] as? String) ?? "kid")
+    }
 
     /// Sends everything waiting. Stops at the first network failure and leaves the rest queued.
     public func drain(_ config: ServiceConfig) async -> String? {
-        for name in ((try? fm.contentsOfDirectory(atPath: Paths.outbox.path)) ?? []).sorted() {
+        for name in ((try? fm.contentsOfDirectory(atPath: Paths.outbox.path)) ?? []).sorted() where !name.hasPrefix("pair-") {
             let file = Paths.outbox.appendingPathComponent(name)
             guard let data = try? Data(contentsOf: file), let req = try? JSONDecoder().decode(SiteRequest.self, from: data) else {
                 unlink(file.path)
@@ -262,14 +383,18 @@ public final class SiteSync {
             return .done
         }
         if status == 400 || status == 404 { return .rejected }
+        // 429: the family's daily allowance of AI calls is used up. A search is dropped; the rest wait for tomorrow.
+        if status == 429 { return req.kind == "search" ? .rejected : .retryLater }
         if status == 503 { return .retryLater }
-        throw URLError(status == 401 ? .userAuthenticationRequired : .badServerResponse)
+        if status == 401 { throw ServiceError.notLinked }
+        throw URLError(.badServerResponse)
     }
 
     /// Pulls every label, which is how the parent's decisions reach the Mac.
     public func refresh(_ config: ServiceConfig) async throws {
         let (data, status) = try await call(config, path: "/api/sites", json: nil)
-        guard status == 200 else { throw URLError(status == 401 ? .userAuthenticationRequired : .badServerResponse) }
+        if status == 401 { throw ServiceError.notLinked }
+        guard status == 200 else { throw URLError(.badServerResponse) }
         let list = try JSONDecoder().decode(SiteList.self, from: data)
         write(SiteBook(entries: list.sites))
     }
@@ -279,7 +404,9 @@ public final class SiteSync {
             throw URLError(.badURL)
         }
         var request = URLRequest(url: url)
-        request.setValue("Bearer \(config.deviceToken)", forHTTPHeaderField: "Authorization")
+        if !config.deviceToken.isEmpty {
+            request.setValue("Bearer \(config.deviceToken)", forHTTPHeaderField: "Authorization")
+        }
         if let json {
             request.httpMethod = "POST"
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")

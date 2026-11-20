@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Create an account · YoungWonks Focus{% endblock %}
+{% block body %}
+<div class="narrow">
+  <div class="card" style="padding:26px">
+    <div class="row" style="margin-bottom:16px"><span class="logo" style="width:40px;height:40px;border-radius:11px"></span>
+      <div><div style="font-weight:700;font-size:18px">YoungWonks Focus</div><div class="muted small">Create a parent account</div></div></div>
+    {% if error %}<p class="err" style="margin:0 0 12px">{{ error }}</p>{% endif %}
+    <form method="post">
+      <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+      <label for="invite">Invitation code</label>
+      <input class="field" id="invite" name="invite" value="{{ values.invite }}" autocomplete="off" required style="text-transform:uppercase;letter-spacing:1px">
+      <label for="name">Your name</label>
+      <input class="field" id="name" name="name" value="{{ values.name }}" autocomplete="given-name" maxlength="40" required>
+      <label for="email">Your email</label>
+      <input class="field" id="email" name="email" type="email" value="{{ values.email }}" autocomplete="username" required>
+      <label for="password">Choose a password (10 characters or more)</label>
+      <input class="field" id="password" name="password" type="password" autocomplete="new-password" minlength="10" required>
+      <button class="btn" style="width:100%;margin-top:4px">Create account</button>
+    </form>
+    <p class="small" style="margin:14px 0 0;text-align:center">Already have one? <a href="{{ url_for('login') }}">Sign in</a></p>
+  </div>
+  <p class="muted small" style="text-align:center;margin-top:14px">Accounts are by invitation for now. A household invitation makes you its admin; an invitation from your household's admin adds you to it.</p>
+</div>
+{% endblock %}

@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% set active = 'people' %}
+{% block title %}People · YoungWonks Focus{% endblock %}
+{% block body %}
+<h1>People</h1>
+<p class="muted">Admins and co-admins can see the kids' records. An adult's records are private: only that adult can see them, on their own sign-in.</p>
+{% if message %}<p class="ok">{{ message }}</p>{% endif %}
+{% if error %}<p class="err">{{ error }}</p>{% endif %}
+
+<div class="stack" style="margin-top:14px">
+{% for p in people %}
+  <div class="card row">
+    <div style="flex:1;min-width:180px"><div style="font-weight:700">{{ p.name }}</div>
+      <div class="muted small">{% if p.email %}{{ p.email }} · {% endif %}{{ p.computers }} computer{{ '' if p.computers == 1 else 's' }} linked</div></div>
+    <span class="pill {{ 'brand' if p.role in ('admin', 'coadmin') else ('good' if p.kind == 'kid' else '') }}">{{ p.role_text }}</span>
+    {% if p.kind == 'kid' %}
+      <form method="post" class="row" style="gap:6px"><input type="hidden" name="csrf" value="{{ csrf_token() }}"><input type="hidden" name="action" value="rename">
+        <input type="hidden" name="member" value="{{ p.id }}"><input class="field" name="name" placeholder="New name" style="margin:0;width:130px" maxlength="40">
+        <button class="ghost">Rename</button></form>
+    {% elif i_am_admin and p.role in ('coadmin', 'adult') %}
+      <form method="post"><input type="hidden" name="csrf" value="{{ csrf_token() }}"><input type="hidden" name="action" value="role">
+        <input type="hidden" name="account" value="{{ p.account }}"><input type="hidden" name="role" value="{{ 'adult' if p.role == 'coadmin' else 'coadmin' }}">
+        <button class="ghost">{{ 'Remove co-admin rights' if p.role == 'coadmin' else 'Make co-admin' }}</button></form>
+    {% endif %}
+  </div>
+{% endfor %}
+</div>
+
+<h2>Add a kid</h2>
+<form method="post" class="card row">
+  <input type="hidden" name="csrf" value="{{ csrf_token() }}"><input type="hidden" name="action" value="kid">
+  <input class="field" name="name" placeholder="Their first name" style="flex:1;margin:0;min-width:180px" maxlength="40" required>
+  <button class="btn">Add</button>
+</form>
+<p class="muted small">Kids do not get a sign-in. After adding one, link their computer under Computers.</p>
+
+<h2>Invite an adult</h2>
+<form method="post" class="card row">
+  <input type="hidden" name="csrf" value="{{ csrf_token() }}"><input type="hidden" name="action" value="invite">
+  <input class="field" name="name" placeholder="Their name" style="flex:1;margin:0;min-width:160px" maxlength="40">
+  <select class="field" name="role" style="width:auto;margin:0">
+    <option value="adult">Adult member (their records stay private)</option>
+    {% if i_am_admin %}<option value="coadmin">Co-admin (can also see and manage the kids)</option>{% endif %}
+  </select>
+  <button class="btn">Create invitation</button>
+</form>
+{% for i in invites %}
+  <div class="card row" style="margin-top:10px"><span style="font:700 15px ui-monospace,Menlo,monospace;letter-spacing:1px">{{ i._id }}</span>
+    <span class="muted small" style="flex:1">{{ i.name }} · {{ 'Co-admin' if i.role == 'coadmin' else 'Adult member' }}</span>
+    <a class="small" href="{{ signup_url }}?invite={{ i._id }}">{{ signup_url }}?invite={{ i._id }}</a></div>
+{% endfor %}
+{% endblock %}

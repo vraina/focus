@@ -104,7 +104,9 @@ struct RequestDialog: View {
                         .font(.system(size: 12)).foregroundStyle(.secondary)
                 }
             }
-            Text("The request is checked straight away. Your reason and the answer go into your parent's daily summary.")
+            Text(HelperStatus.load()?.isAdult == true
+                 ? "The request is checked straight away. It goes into your own daily summary, which only you see."
+                 : "The request is checked straight away. Your reason and the answer go into the household admins' daily summary.")
                 .font(.system(size: 12)).foregroundStyle(.secondary).multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
             HStack(spacing: 10) {

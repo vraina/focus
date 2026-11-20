@@ -1,260 +1,190 @@
 import AppKit
-import Security
 import SwiftUI
 import FocusSprintCore
 
-enum Keychain {
-    private static let service = "com.focussprint.app"
-
-    static func get(_ key: String) -> String? {
-        let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
-                                    kSecAttrAccount as String: key, kSecReturnData as String: true]
-        var out: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &out) == errSecSuccess, let data = out as? Data else { return nil }
-        return String(data: data, encoding: .utf8)
-    }
-
-    static func set(_ key: String, _ value: String) {
-        let base: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
-                                   kSecAttrAccount as String: key]
-        SecItemDelete(base as CFDictionary)
-        guard !value.isEmpty else { return }
-        SecItemAdd(base.merging([kSecValueData as String: Data(value.utf8)]) { $1 } as CFDictionary, nil)
-    }
-}
-
-/// Writes root-owned files. macOS shows its own administrator password prompt, so a Standard
-/// account cannot change parent settings.
+/// Root-owned changes. macOS shows its own administrator password prompt, so a Standard
+/// account cannot do these.
 enum AdminWriter {
-    struct Item {
-        var data: Data
-        var destination: URL
-        var mode: String
-    }
-
-    /// Proves an administrator is at the keyboard, using the standard macOS password prompt.
-    static func authenticate() -> Bool {
-        if FileManager.default.isWritableFile(atPath: Paths.root.path) { return true } // development root
-        let script = NSAppleScript(source: "do shell script \"/usr/bin/true\" with prompt \"YoungWonks Focus parent settings\" with administrator privileges")
-        var error: NSDictionary?
-        script?.executeAndReturnError(&error)
-        return error == nil
-    }
-
-    static func install(_ items: [Item]) throws {
+    /// Removes this Mac's link to its household.
+    static func unlink() throws {
         let fm = FileManager.default
         if fm.isWritableFile(atPath: Paths.root.path) {
             // Development root owned by the current user: no elevation needed.
-            for item in items {
-                try item.data.write(to: item.destination, options: .atomic)
-                chmod(item.destination.path, mode_t(item.mode, radix: 8) ?? 0o644)
-            }
+            try? fm.removeItem(at: Paths.service)
             return
         }
-        let staging = fm.temporaryDirectory.appendingPathComponent("focussprint-\(UUID().uuidString)", isDirectory: true)
-        try fm.createDirectory(at: staging, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-        defer { try? fm.removeItem(at: staging) }
-        var commands: [String] = []
-        for (index, item) in items.enumerated() {
-            let tmp = staging.appendingPathComponent("\(index)")
-            try item.data.write(to: tmp)
-            commands.append("/usr/bin/install -m \(item.mode) -o root -g wheel '\(tmp.path)' '\(item.destination.path)'")
-        }
-        let shell = commands.joined(separator: " && ")
+        let shell = "/bin/rm -f '\(Paths.service.path)'"
             .replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
-        let script = NSAppleScript(source: "do shell script \"\(shell)\" with prompt \"YoungWonks Focus parent settings\" with administrator privileges")
+        let script = NSAppleScript(source: "do shell script \"\(shell)\" with prompt \"Unlink this Mac from its household\" with administrator privileges")
         var error: NSDictionary?
         script?.executeAndReturnError(&error)
         if let error {
-            throw NSError(domain: "FocusSprint", code: 1, userInfo: [
+            throw NSError(domain: "YoungWonksFocus", code: 1, userInfo: [
                 NSLocalizedDescriptionKey: (error[NSAppleScript.errorMessage] as? String) ?? "Administrator approval was not given."])
         }
     }
 }
 
+/// The Account tab. Reports and settings live on the website; this screen only links the Mac to
+/// a member of a household and shows how the link is doing.
 struct SettingsView: View {
-    @State private var config = ParentConfig.load()
-    @State private var domainsText = ""
-    @State private var appsText = ""
-    @State private var mongoURI = ""
-    @State private var serviceURL = ""
-    @State private var deviceToken = ""
-    @State private var unlocked = false
-    @State private var viewerURI = Keychain.get("viewerURI") ?? ""
     @State private var status = HelperStatus.load()
+    @State private var code = ""
+    @State private var deviceName = Host.current().localizedName ?? "Mac"
+    @State private var waitingFor: String?
+    @State private var startedWaiting = Date()
     @State private var message: String?
     @State private var messageIsError = false
-    private let statusTimer = Timer.publish(every: 4, on: .main, in: .common).autoconnect()
+    private let poll = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
+
+    private var helperRunning: Bool { status?.isFresh == true }
+    private var linked: Bool { status?.linked == true }
 
     var body: some View {
-        if unlocked {
-            settings.onDisappear { unlocked = false } // locks again as soon as the tab is left
-        } else {
-            VStack(spacing: 16) {
-                Image(systemName: "lock.fill")
-                    .font(.system(size: 28, weight: .bold))
-                    .foregroundStyle(.white)
-                    .frame(width: 72, height: 72)
-                    .background(Theme.gradient, in: Circle())
-                VStack(spacing: 6) {
-                    Text("Parent settings").font(Theme.title(26))
-                    Text("Only a parent can open this section.\nIt needs the Mac administrator password.")
-                        .font(.system(size: 14)).foregroundStyle(.secondary).multilineTextAlignment(.center)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Account").font(Theme.title(30))
+                    Text("Reports and settings are on the website. This Mac only needs to be linked once, to the person who uses it.")
+                        .font(.system(size: 14)).foregroundStyle(.secondary)
                 }
-                Button { unlocked = AdminWriter.authenticate() } label: {
-                    Label("Unlock", systemImage: "lock.open.fill")
-                }
-                .buttonStyle(PrimaryButtonStyle())
-                .frame(width: 220)
-                .keyboardShortcut(.defaultAction)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
-    }
-
-    private var settings: some View {
-        Form {
-            Section("What gets captured on each switch") {
-                Picker("Capture", selection: $config.captureMode) {
-                    Text("Screenshots").tag(CaptureMode.screenshot)
-                    Text("Short video clips").tag(CaptureMode.video)
-                }
-                .pickerStyle(.segmented)
-                if config.captureMode == .video {
-                    Stepper("Clip length: first and last \(config.clipSeconds) seconds", value: $config.clipSeconds, in: 2...15)
+                if !helperRunning {
+                    Notice(text: "The YoungWonks Focus helper is not running on this Mac. Run the installer again from an administrator account.", tint: Theme.bad)
+                } else if linked {
+                    linkedCard
                 } else {
-                    Text("One picture when the switch starts and one from just before returning.")
-                        .font(.caption).foregroundStyle(.secondary)
+                    linkCard
+                }
+                if let message {
+                    Notice(text: message, tint: messageIsError ? Theme.bad : Theme.good,
+                           icon: messageIsError ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
                 }
             }
-            Section("Outside sprints") {
-                Toggle("Track known distractions all day", isOn: $config.trackAllDay)
-                Text("When no sprint is running, visits to the sites and apps listed below are still recorded, with the same pictures, and count towards the day's total. Everything else is left alone.")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-            Section("Known distractions (flagged in red)") {
-                VStack(alignment: .leading) {
-                    Text("Websites, one per line").font(.caption).foregroundStyle(.secondary)
-                    TextEditor(text: $domainsText).font(.body.monospaced()).frame(height: 110)
-                }
-                VStack(alignment: .leading) {
-                    Text("Apps, one per line").font(.caption).foregroundStyle(.secondary)
-                    TextEditor(text: $appsText).font(.body.monospaced()).frame(height: 70)
-                }
-            }
-            Section("Cloud storage (MongoDB Atlas)") {
-                LabeledContent("Upload status", value: statusText)
-                field("Connection string for the insert-only user",
-                      hint: status?.mongoConfigured == true ? "One is saved. It is never shown again; leave blank to keep it." : "None saved yet",
-                      placeholder: status?.mongoConfigured == true ? "Saved, hidden. Paste a new one to replace it"
-                                                                   : "mongodb+srv://user:password@cluster.mongodb.net/focus",
-                      text: $mongoURI, secret: true)
-                Text("Stored where only an administrator can read it. Records wait on this Mac until Atlas confirms each one.")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-            Section("Website labels and parent emails") {
-                LabeledContent("Service status", value: serviceStatusText)
-                field("Family service address", hint: "To change the address or the token, fill in both",
-                      placeholder: "https://your-service.onrender.com", text: $serviceURL, secret: false)
-                field("Device token",
-                      hint: status?.serviceURL != nil ? "One is saved. It is never shown again; leave blank to keep it."
-                                                      : "The DEVICE_TOKEN value from the service's environment settings",
-                      placeholder: status?.serviceURL != nil ? "Saved, hidden. Paste a new one to replace it" : "Paste the token here",
-                      text: $deviceToken, secret: true)
-                Text("New websites are labelled productive or distraction by Claude through this service. It also reviews \"needed for work\" requests and emails you one summary at the end of each day. Nothing is ever blocked.")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-            Section {
-                HStack {
-                    Button("Save parent settings…") { save() }.buttonStyle(.borderedProminent)
-                    Text("Asks for a Mac administrator password.").font(.caption).foregroundStyle(.secondary)
-                }
-                if let message { Text(message).foregroundStyle(messageIsError ? .red : .green) }
-            }
-            Section("Viewing cloud history on this Mac") {
-                field("Connection string for a read-only user", hint: "Saved in this user's keychain",
-                      placeholder: "mongodb+srv://viewer:password@cluster.mongodb.net/focus", text: $viewerURI, secret: true)
-                Button("Save for this user") {
-                    Keychain.set("viewerURI", viewerURI.trimmingCharacters(in: .whitespacesAndNewlines))
-                    message = "Saved. Open History and choose Cloud."
-                    messageIsError = false
-                }
-                Text("Optional. Lets History show sprints from the cloud, for example on a parent's Mac.")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
+            .padding(28)
+            .frame(maxWidth: 620, alignment: .leading)
+            .frame(maxWidth: .infinity)
         }
-        .formStyle(.grouped)
-        .onAppear {
-            config = ParentConfig.load()
-            domainsText = config.distractionDomains.joined(separator: "\n")
-            appsText = config.distractionApps.joined(separator: "\n")
-            status = HelperStatus.load()
-            if serviceURL.isEmpty, let saved = status?.serviceURL { serviceURL = saved }
+        .onReceive(poll) { _ in refresh() }
+        .onAppear(perform: refresh)
+    }
+
+    // MARK: Not linked yet
+
+    private var linkCard: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 12) {
+                Image(systemName: "link")
+                    .font(.system(size: 18, weight: .bold)).foregroundStyle(.white)
+                    .frame(width: 44, height: 44).background(Theme.gradient, in: Circle())
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Link this Mac").font(Theme.title(18))
+                    Text("On the website, open Computers, pick who uses this Mac, and choose \"Get a code\".")
+                        .font(.system(size: 13)).foregroundStyle(.secondary)
+                }
+            }
+            VStack(alignment: .leading, spacing: 6) {
+                SectionLabel(text: "Code from the website")
+                TextField("XXXX-XXXX", text: $code)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 26, weight: .bold, design: .monospaced))
+                    .padding(12)
+                    .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .onSubmit(link)
+            }
+            VStack(alignment: .leading, spacing: 6) {
+                SectionLabel(text: "Name for this computer")
+                TextField("e.g. Mia's MacBook", text: $deviceName)
+                    .textFieldStyle(.plain).font(.system(size: 15)).padding(10)
+                    .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            }
+            Button(action: link) {
+                Label(waitingFor == nil ? "Link this Mac" : "Linking…", systemImage: "link")
+            }
+            .buttonStyle(PrimaryButtonStyle())
+            .disabled(waitingFor != nil || code.filter { $0.isLetter || $0.isNumber }.count < 8)
+            Text("No account password is ever typed on this computer. Until it is linked, everything recorded simply waits on this Mac.")
+                .font(.system(size: 12)).foregroundStyle(.secondary)
         }
-        .onReceive(statusTimer) { _ in
-            status = HelperStatus.load()
-            if serviceURL.isEmpty, let saved = status?.serviceURL { serviceURL = saved }
+        .card()
+    }
+
+    // MARK: Linked
+
+    private var linkedCard: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 12) {
+                Image(systemName: status?.linkProblem == nil ? "checkmark" : "exclamationmark")
+                    .font(.system(size: 18, weight: .bold)).foregroundStyle(.white)
+                    .frame(width: 44, height: 44)
+                    .background(status?.linkProblem == nil ? Theme.good : Theme.warn, in: Circle())
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(status?.memberName.map { $0.isEmpty ? "Linked" : "Linked as \($0)'s computer" } ?? "Linked").font(Theme.title(18))
+                    Text([status?.deviceName.map { "\"\($0)\"" }, status?.account.map { "household account \($0)" }].compactMap { $0 }.joined(separator: " · "))
+                        .font(.system(size: 13)).foregroundStyle(.secondary)
+                }
+            }
+            if let problem = status?.linkProblem { Notice(text: problem, tint: Theme.warn) }
+            HStack(spacing: 12) {
+                StatTile(title: "Waiting to send", value: "\(status?.pending ?? 0)", icon: "tray.and.arrow.up")
+                StatTile(title: "Last sent", value: status?.lastUploadAt.map { $0.formatted(date: .omitted, time: .shortened) } ?? "—",
+                         icon: "clock")
+            }
+            if let error = status?.lastError, status?.linkProblem == nil {
+                Text("Cannot reach the service right now (\(error)). Everything is kept here and sent when it is back.")
+                    .font(.system(size: 12)).foregroundStyle(.secondary)
+            }
+            HStack {
+                Button("Open the website") {
+                    if let url = URL(string: ServiceConfig.baseURL) { NSWorkspace.shared.open(url) }
+                }
+                .controlSize(.large)
+                Spacer()
+                Button("Unlink this Mac…", action: unlink)
+                    .buttonStyle(.plain).font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.bad)
+            }
+            Text(status?.isAdult == true
+                 ? "Your records are private: only you can see them, on your own sign-in. Unlinking needs the Mac administrator password."
+                 : "A household admin can see what this Mac records. Unlinking needs the Mac administrator password.")
+                .font(.system(size: 12)).foregroundStyle(.secondary)
+        }
+        .card()
+    }
+
+    // MARK: Actions
+
+    private func refresh() {
+        status = HelperStatus.load()
+        guard let id = waitingFor else { return }
+        if let result = PairingResult.load(), result.id == id {
+            waitingFor = nil
+            message = result.message
+            messageIsError = !result.ok
+            if result.ok { code = "" }
+        } else if Date().timeIntervalSince(startedWaiting) > 40 {
+            waitingFor = nil
+            message = "No answer from the helper. Check that the Mac is online and try again."
+            messageIsError = true
         }
     }
 
-    /// A label above a full-width box. (A plain Form text field puts its title on the left and leaves
-    /// the box on the right with no border, which made these look like there was nowhere to type.)
-    private func field(_ label: String, hint: String, placeholder: String, text: Binding<String>, secret: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(label).font(.headline)
-            Group {
-                if secret {
-                    SecureField("", text: text, prompt: Text(placeholder))
-                } else {
-                    TextField("", text: text, prompt: Text(placeholder))
-                }
-            }
-            .labelsHidden()
-            .textFieldStyle(.roundedBorder)
-            Text(hint).font(.caption).foregroundStyle(.secondary)
-        }
-        .padding(.vertical, 2)
-    }
-
-    private var serviceStatusText: String {
-        guard let status, status.isFresh else { return "Vault helper is not running" }
-        guard let address = status.serviceURL else { return "Not set up" }
-        if let problem = status.serviceProblem { return "Saved, but not working: \(problem)" }
-        return "Connected to \(address)"
-    }
-
-    private var statusText: String {
-        guard let status, status.isFresh else { return "Vault helper is not running" }
-        if !status.mongoConfigured { return "No connection string yet · \(status.pending) item(s) waiting on this Mac" }
-        if status.pending == 0 { return "Everything is uploaded" }
-        return "\(status.pending) item(s) waiting" + (status.lastError != nil ? " · cannot reach Atlas, will retry" : "")
-    }
-
-    private func save() {
-        config.distractionDomains = FocusRules.parseList(domainsText)
-        config.distractionApps = appsText.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+    private func link() {
+        let id = UUID().uuidString.lowercased()
+        let name = deviceName.trimmingCharacters(in: .whitespaces)
         do {
-            var items = [AdminWriter.Item(data: try JSONCoding.encoder.encode(config), destination: Paths.config, mode: "644")]
-            let uri = mongoURI.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !uri.isEmpty {
-                items.append(AdminWriter.Item(data: try JSONEncoder().encode(Secrets(mongoURI: uri)), destination: Paths.secrets, mode: "600"))
-            }
-            let address = serviceURL.trimmingCharacters(in: .whitespacesAndNewlines)
-            let token = deviceToken.trimmingCharacters(in: .whitespacesAndNewlines)
-            // The saved token cannot be read back, so a changed address needs the token typed again.
-            if token.isEmpty, !address.isEmpty, address != status?.serviceURL {
-                message = "Enter the device token as well: the address and the token are saved together."
-                messageIsError = true
-                return
-            }
-            if !address.isEmpty, !token.isEmpty {
-                items.append(AdminWriter.Item(data: try JSONEncoder().encode(ServiceConfig(serviceURL: address, deviceToken: token)),
-                                              destination: Paths.service, mode: "600"))
-            }
-            try AdminWriter.install(items)
-            mongoURI = ""
-            deviceToken = ""
-            message = "Saved. The token and connection string are hidden once saved; the status lines above show whether they work."
+            try SiteRequest.pairing(code: code, deviceName: name.isEmpty ? "Mac" : name, id: id).drop()
+            waitingFor = id
+            startedWaiting = Date()
+            message = nil
+        } catch {
+            message = "Could not pass the code to the helper. Run the installer again from an administrator account."
+            messageIsError = true
+        }
+    }
+
+    private func unlink() {
+        do {
+            try AdminWriter.unlink()
+            message = "Unlinked. This Mac keeps recording, and sends everything once it is linked again."
             messageIsError = false
         } catch {
             message = error.localizedDescription

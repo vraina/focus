@@ -42,16 +42,6 @@ public struct ParentConfig: Codable, Equatable, Sendable {
     }
 }
 
-/// Root-only file (mode 600). The teen's account cannot read the connection string.
-public struct Secrets: Codable, Sendable {
-    public var mongoURI: String
-    public var database: String?
-    public init(mongoURI: String, database: String? = nil) {
-        self.mongoURI = mongoURI
-        self.database = database
-    }
-}
-
 public struct SprintStart: Codable, Identifiable, Sendable {
     public var id: String
     public var device: String

@@ -79,13 +79,13 @@ struct MenuContent: View {
 enum Pane: String, CaseIterable, Identifiable {
     case focus = "Focus"
     case history = "History"
-    case parent = "Parent settings"
+    case parent = "Account"
     var id: String { rawValue }
     var icon: String {
         switch self {
         case .focus: return "timer"
         case .history: return "chart.bar.xaxis"
-        case .parent: return "lock"
+        case .parent: return "person.crop.circle"
         }
     }
 }

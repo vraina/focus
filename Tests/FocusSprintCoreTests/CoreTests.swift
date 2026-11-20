@@ -131,15 +131,6 @@ final class CoreTests: XCTestCase {
         XCTAssertNotEqual(a.key, ctx("c", "Chrome", url: "https://espn.com", browser: true).key)
     }
 
-    func testMongoURIDatabase() {
-        XCTAssertEqual(CloudStore.uri("mongodb+srv://u:p@c.x.mongodb.net/?retryWrites=true", withDatabase: "fs"),
-                       "mongodb+srv://u:p@c.x.mongodb.net/fs?retryWrites=true")
-        XCTAssertEqual(CloudStore.uri("mongodb+srv://u:p@c.x.mongodb.net", withDatabase: "fs"), "mongodb+srv://u:p@c.x.mongodb.net/fs")
-        XCTAssertEqual(CloudStore.uri("mongodb://localhost:27017?x=1", withDatabase: "fs"), "mongodb://localhost:27017/fs?x=1")
-        XCTAssertEqual(CloudStore.uri("mongodb://localhost/mine?x=1", withDatabase: "fs"), "mongodb://localhost/mine?x=1")
-        XCTAssertEqual(CloudStore.uri("mongodb://localhost/", withDatabase: "fs"), "mongodb://localhost/fs")
-    }
-
     func testVaultIngestIsAppendOnlyAndStrict() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("fs-test-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }
@@ -171,24 +162,6 @@ final class CoreTests: XCTestCase {
 
         vault.markUploaded(vault.pendingItems()[0])
         XCTAssertEqual(vault.pendingItems().count, 1)
-    }
-
-    func testRecordRoundTripThroughBSON() throws {
-        let event = DistractionEvent(id: "s1-e2", sprintId: "s1", seq: 2, startedAt: Date(timeIntervalSince1970: 1_800_000_000),
-                                     endedAt: Date(timeIntervalSince1970: 1_800_000_192), durationSeconds: 192.5,
-                                     appName: "Chrome", bundleId: "com.google.Chrome", title: "Reels", url: "https://instagram.com/reels",
-                                     host: "instagram.com", category: .distraction,
-                                     media: [MediaRef(role: .start, kind: .image, file: "e2-start.jpg")])
-        let json = try JSONCoding.encoder.encode(event)
-        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: json) as? [String: Any])
-        let doc = BSONBridge.document(from: object)
-        XCTAssertEqual(doc["_id"] as? String, "s1-e2")
-        let back = try JSONSerialization.data(withJSONObject: BSONBridge.json(from: doc))
-        let decoded = try JSONCoding.decoder.decode(DistractionEvent.self, from: back)
-        XCTAssertEqual(decoded.durationSeconds, 192.5)
-        XCTAssertEqual(decoded.seq, 2)
-        XCTAssertEqual(decoded.media, event.media)
-        XCTAssertEqual(decoded.startedAt, event.startedAt)
     }
 
     func frame(_ gray: CGFloat, width: Int = 640, height: Int = 400) -> CGImage {
@@ -231,29 +204,5 @@ final class CoreTests: XCTestCase {
         XCTAssertFalse(record.interrupted)
         XCTAssertEqual(Format.duration(192), "3m 12s")
         XCTAssertEqual(Format.duration(8), "8s")
-    }
-}
-
-/// Runs only when FOCUSSPRINT_TEST_MONGO points at a database that already holds uploaded sprints.
-final class CloudReadTests: XCTestCase {
-    func testPullAndMedia() async throws {
-        guard let uri = ProcessInfo.processInfo.environment["FOCUSSPRINT_TEST_MONGO"] else { throw XCTSkip("no test database") }
-        let cache = FileManager.default.temporaryDirectory.appendingPathComponent("fs-cloud-\(UUID().uuidString)")
-        defer { try? FileManager.default.removeItem(at: cache) }
-        let store = CloudStore(uri: uri)
-        try await store.ping()
-        try await store.pull(into: cache)
-        let records = SprintReader.list(in: cache)
-        XCTAssertGreaterThanOrEqual(records.count, 2)
-        let seeded = try XCTUnwrap(records.first { $0.id == "20261119-133000-abc123" })
-        XCTAssertEqual(seeded.events.first?.host, "instagram.com")
-        XCTAssertEqual(seeded.events.first?.durationSeconds, 192.4)
-        let media = try await store.media(sprintId: seeded.id, file: "e1-start.jpg")
-        XCTAssertEqual(media?.prefix(2), Data([0xFF, 0xD8]))
-        // Re-sending an already stored record must be accepted silently (retry after a dropped connection).
-        try await store.upload(sprintId: seeded.id, file: "e1-start.jpg", data: try XCTUnwrap(media))
-        let live = try XCTUnwrap(records.first { $0.start.task == "Dev test sprint" })
-        XCTAssertGreaterThanOrEqual(live.events.count, 4)
-        XCTAssertNotNil(live.end)
     }
 }

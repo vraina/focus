@@ -13,7 +13,7 @@ DECISION_COLOR = {"approve_temporary": "#15803d", "approve_permanent": "#15803d"
 
 
 def digest_email(day_label: str, requests: list[dict], new_sites: list[dict], link_for,
-                 children: list[dict] | None = None, dashboard_url: str = "") -> tuple[str, str]:
+                 children: list[dict] | None = None, dashboard_url: str = "", about_kids: bool = True) -> tuple[str, str]:
     """`children`: one entry per child with that child's requests, search counts and distraction searches.
     `link_for(host)` gives the page where the parent can overrule a site's label."""
     e = html.escape
@@ -22,7 +22,7 @@ def digest_email(day_label: str, requests: list[dict], new_sites: list[dict], li
     subject = f"YoungWonks Focus daily summary, {day_label}: {len(requests)} request(s), {approved} approved"
     parts = [f'''<div style="font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;font-size:15px;color:#1a1a1a;max-width:620px">
 <h2 style="margin:0 0 4px">Daily summary, {e(day_label)}</h2>
-<p style="color:#666;margin:0 0 18px">Nothing is blocked. Requests are judged automatically; you can overrule any site below. Newest first.</p>''']
+<p style="color:#666;margin:0 0 18px">{"About the kids in your household. " if about_kids else "About you only; nobody else in your household can see this. "}Nothing is blocked. Requests are judged automatically; you can overrule any site below. Newest first.</p>''']
 
     for child in children:
         if len(children) > 1:
@@ -60,7 +60,7 @@ def digest_email(day_label: str, requests: list[dict], new_sites: list[dict], li
                 parts.append("</table>")
     if any(sum((c.get("counts") or {}).values()) for c in children):
         parts.append('''<p style="color:#666;font-size:13px;margin:10px 0 0">Only distraction searches are listed. Schoolwork searches are counted, and private topics
-(health, feelings, relationships and the like) are counted without their words, so your child can still look for help.</p>''')
+(health, feelings, relationships and the like) are counted without their words.</p>''')
 
     if new_sites:
         parts.append('<h3 style="margin:18px 0 8px">Websites labelled for the first time today</h3><table style="border-collapse:collapse;width:100%">')
@@ -75,6 +75,26 @@ def digest_email(day_label: str, requests: list[dict], new_sites: list[dict], li
 background:#5e57f0;color:#ffffff;text-decoration:none;font-weight:600">Open the full day, with pictures</a></p>''')
     parts.append("</div>")
     return subject, "".join(parts)
+
+
+def _button_email(heading: str, text: str, label: str, link: str, footnote: str) -> str:
+    e = html.escape
+    return f'''<div style="font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;font-size:15px;color:#1a1a1a;max-width:520px">
+<h2 style="margin:0 0 8px">{e(heading)}</h2><p>{e(text)}</p>
+<p><a href="{e(link)}" style="display:inline-block;padding:11px 18px;border-radius:8px;background:#5e57f0;color:#ffffff;text-decoration:none;font-weight:600">{e(label)}</a></p>
+<p style="color:#666;font-size:13px">{e(footnote)}</p></div>'''
+
+
+def verification_email(link: str) -> tuple[str, str]:
+    return ("Confirm your email for YoungWonks Focus",
+            _button_email("Confirm your email", "Your daily summary will be sent to this address once it is confirmed.",
+                          "Confirm my email", link, "If you did not create a YoungWonks Focus account, you can ignore this email."))
+
+
+def reset_email(link: str) -> tuple[str, str]:
+    return ("Choose a new password for YoungWonks Focus",
+            _button_email("Choose a new password", "Use the button below to set a new password. The link works for one hour.",
+                          "Choose a new password", link, "If you did not ask for this, you can ignore this email; your password is unchanged."))
 
 
 def send(to: str, subject: str, body_html: str) -> bool:

@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% set active = 'settings' %}
+{% block title %}Settings · YoungWonks Focus{% endblock %}
+{% macro capture(s) %}
+<div class="card">
+  <label><input type="radio" name="captureMode" value="screenshot" {{ 'checked' if s.captureMode != 'video' }}> Screenshots: one when the switch starts, one from just before returning</label><br>
+  <label style="display:inline-block;margin-top:8px"><input type="radio" name="captureMode" value="video" {{ 'checked' if s.captureMode == 'video' }}> Short video clips of the first and last
+    <input name="clipSeconds" type="number" min="2" max="15" value="{{ s.clipSeconds }}" style="width:60px;padding:4px 6px;border-radius:6px;border:1px solid var(--line);background:var(--canvas);color:var(--ink)"> seconds</label>
+  <p style="margin:12px 0 0"><label><input type="checkbox" name="trackAllDay" {{ 'checked' if s.trackAllDay }}> Track known distractions and searches all day, not only during a sprint</label></p>
+  <p class="muted small" style="margin:10px 0 0">Pictures are kept for 14 days. Clips use several times more storage than screenshots.</p>
+</div>
+<div class="card" style="margin-top:12px">
+  <label>Websites that always count as a distraction, one per line</label>
+  <textarea class="field" name="domains">{{ s.distractionDomains|join("\n") }}</textarea>
+  <label>Apps, one per line</label>
+  <textarea class="field" name="apps" style="min-height:90px">{{ s.distractionApps|join("\n") }}</textarea>
+  <p class="muted small" style="margin:0">Other websites are labelled automatically the first time they are seen. This list always wins over that label.</p>
+</div>
+{% endmacro %}
+{% block body %}
+<h1>Settings</h1>
+{% if message %}<p class="ok">{{ message }}</p>{% endif %}
+{% if error %}<p class="err">{{ error }}</p>{% endif %}
+
+{% if is_admin(account) %}
+<h2>The kids' computers</h2>
+<form method="post">
+  <input type="hidden" name="csrf" value="{{ csrf_token() }}"><input type="hidden" name="action" value="household">
+  {{ capture(kids) }}
+  <div class="card" style="margin-top:12px">
+    <p style="margin-top:0">The daily summary about the kids goes to every admin and co-admin.</p>
+    <label for="timezone">Household time zone</label>
+    <input class="field" id="timezone" name="timezone" value="{{ family.timezone }}" placeholder="America/Los_Angeles">
+    <label for="digestHour">Send summaries after this hour (0 to 23)</label>
+    <input class="field" id="digestHour" name="digestHour" type="number" min="0" max="23" value="{{ family.digestHour }}" style="max-width:120px">
+  </div>
+  <p><button class="btn">Save for the kids' computers</button></p>
+</form>
+{% endif %}
+
+<h2>My own computers</h2>
+<p class="muted small" style="margin-top:-4px">These apply only to computers linked to you. Your records and your summary are visible only to you.</p>
+<form method="post">
+  <input type="hidden" name="csrf" value="{{ csrf_token() }}"><input type="hidden" name="action" value="mine">
+  <div class="card" style="margin-bottom:12px"><label for="name">Your name</label>
+    <input class="field" id="name" name="name" value="{{ me.name }}" maxlength="40" style="max-width:260px;margin-bottom:0"></div>
+  {{ capture(mine) }}
+  <p><button class="btn">Save for my computers</button></p>
+</form>
+
+<h2>Sign-in</h2>
+<div class="card" style="max-width:460px">
+  <p style="margin-top:0"><b>{{ account.email }}</b>{% if not account.verified %} <span class="pill warn">Not confirmed yet</span>{% endif %}</p>
+  {% if not account.verified %}
+  <form method="post" style="margin-bottom:14px"><input type="hidden" name="csrf" value="{{ csrf_token() }}"><input type="hidden" name="action" value="verify">
+    <button class="ghost">Send the confirmation email again</button></form>
+  {% endif %}
+  <form method="post">
+    <input type="hidden" name="csrf" value="{{ csrf_token() }}"><input type="hidden" name="action" value="password">
+    <label for="current">Current password</label><input class="field" id="current" name="current" type="password" autocomplete="current-password" required>
+    <label for="password">New password (10 characters or more)</label><input class="field" id="password" name="password" type="password" autocomplete="new-password" minlength="10" required>
+    <button class="ghost">Change password</button>
+  </form>
+</div>
+{% endblock %}

@@ -1,28 +1,34 @@
-"""YoungWonks Focus family service.
+"""YoungWonks Focus service, for many households.
 
-- The Mac helper asks it to label new websites, and to review "needed for work" requests. Claude does both.
-- An approved request stops the site counting as a distraction for a while, or for good. Nothing is ever blocked.
-- Every request, the student's words and the decision go into `requests`, and the parent gets one summary
-  email at the end of the day, with a link per site to overrule it.
-- Labels and approvals live in MongoDB (`sites`), and the Mac helper syncs them down.
+- A household has an admin, optional co-admins, and members who are kids or other adults. Admins and adults sign
+  in on the website (accounts are by invitation); kids do not have a sign-in.
+- Each computer is linked to one member with a one-time pairing code. The Mac gets its own token; it never sees a
+  database address or anyone's password.
+- Everything a Mac sends is stored under that member. Admins and co-admins can see kids' records. An adult's
+  records are private to that adult: nobody else in the household, and no other household, can read them.
+- Claude labels websites and searches and reviews "needed for work" requests. Nothing is ever blocked.
+- Admins get one summary email a day about the kids; each adult gets their own.
 """
-import hmac
-import html
+import hashlib
+import json
 import logging
 import os
 import re
+import secrets
 import threading
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
-from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from bson.binary import Binary
 from dotenv import load_dotenv
-from flask import Flask, abort, jsonify, request
-from itsdangerous import BadSignature, URLSafeSerializer
+from flask import Flask, abort, g, jsonify, request
+from itsdangerous import URLSafeSerializer, URLSafeTimedSerializer
 from pymongo import MongoClient
 from pymongo.errors import DuplicateKeyError
 
+import accounts
 import classifier
 import dashboard
 import mailer
@@ -32,20 +38,17 @@ load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
 logging.basicConfig(level=logging.INFO)
 
 HOST_RE = re.compile(r"^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$")
-# What a parent's choice on the "overrule" page turns the site into. There is deliberately no "block":
-# this tool makes the student and the parent aware of what happens, it never prevents anything.
-DECISIONS = {"allow": "allowed", "distraction": "locked"}
-DECISION_TEXT = {
-    "allow": ("Always allow", "It will never count as a distraction."),
-    "distraction": ("Always a distraction", "It counts as a distraction and \"needed for work\" requests for it are turned down."),
-}
-STATE_TEXT = {
-    "productive": "Productive (labelled by AI)", "distraction": "Distraction",
-    "allowed": "Always allowed", "locked": "Distraction (your decision)",
-}
-
-
+SESSION_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]{0,63}$")
+FILE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]{0,63}\.(json|jpg|mp4)$")
+MAX_UPLOAD_BYTES = 12 * 1024 * 1024
 MAX_REQUESTS_PER_SITE_PER_DAY = 5
+DEFAULT_SETTINGS = {
+    "captureMode": "screenshot", "clipSeconds": 5, "trackAllDay": True,
+    "distractionDomains": ["instagram.com", "youtube.com", "youtu.be", "tiktok.com", "espn.com", "nba.com", "nfl.com",
+                           "bleacherreport.com", "twitch.tv", "netflix.com", "reddit.com", "x.com", "twitter.com",
+                           "facebook.com", "snapchat.com", "discord.com", "hotstar.com", "cricbuzz.com", "espncricinfo.com"],
+    "distractionApps": ["Instagram", "TikTok", "Discord", "Steam", "Messages", "TV", "Music", "Spotify"],
+}
 
 
 def iso(moment: datetime) -> str:
@@ -68,62 +71,229 @@ def clean_host(raw) -> str | None:
     return host if HOST_RE.match(host) else None
 
 
+def token_hash(token: str) -> str:
+    """Device tokens are stored only as a hash, so a copy of the database cannot be used to act as a Mac."""
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
+def mask_email(email: str) -> str:
+    name, _, domain = email.partition("@")
+    return f"{name[:1]}{'•' * max(1, min(6, len(name) - 1))}@{domain}"
+
+
+class Service:
+    """What the route modules share: the database, the AI and email functions, and per-family helpers."""
+
+    def __init__(self, db, classify, review, label_search, send_email):
+        self.db = db
+        self.classify, self.review, self.label_search, self.send_email = classify, review, label_search, send_email
+        secret = os.environ["SECRET_KEY"]
+        self.signer = URLSafeSerializer(secret, salt="site-decision")
+        self.timed = URLSafeTimedSerializer(secret, salt="account-link")
+        self.public_url = os.environ.get("PUBLIC_URL", "").rstrip("/")
+        self.default_zone = os.environ.get("TIMEZONE", "America/Los_Angeles")
+        self.daily_ai_limit = int(os.environ.get("FAMILY_DAILY_AI_CALLS", "600"))
+
+    def zone(self, family: dict) -> ZoneInfo:
+        try:
+            return ZoneInfo(family.get("timezone") or self.default_zone)
+        except ZoneInfoNotFoundError:
+            return ZoneInfo(self.default_zone)
+
+    def local_day(self, family: dict, moment: datetime | None = None) -> str:
+        return (moment or datetime.now(timezone.utc)).astimezone(self.zone(family)).strftime("%Y-%m-%d")
+
+    def scope(self, member: dict) -> str:
+        """Whose website list a member uses. Kids in a household share one, which the admins manage.
+        Every adult has their own, which only they can see."""
+        return f"k:{member['familyId']}" if member.get("kind") == "kid" else f"m:{member['_id']}"
+
+    def site_id(self, scope: str, host: str) -> str:
+        return f"{scope}|{host}"
+
+    def site_public(self, doc: dict, member_id: str | None = None) -> dict:
+        out = {"host": doc["host"], "state": doc["state"], "reason": doc.get("reason", ""),
+               "category": doc.get("category", ""), "updatedAt": doc.get("updatedAt", "")}
+        # An approved "needed for work" window belongs to the member who asked, so only their Mac is told about it.
+        until = (doc.get("approvedFor") or {}).get(member_id or "")
+        if until:
+            out["allowedUntil"] = until
+        return out
+
+    def settings_for(self, family: dict, member: dict) -> dict:
+        """Kids follow the household's settings, set by the admins. An adult follows their own."""
+        chosen = family.get("settings") if member.get("kind") == "kid" else member.get("settings")
+        return {**DEFAULT_SETTINGS, **(chosen or {})}
+
+    def may_use_ai(self, fid: str) -> bool:
+        """Each family has a daily allowance of AI calls, so one family cannot run up the bill for everyone."""
+        key = f"{fid}|{datetime.now(timezone.utc).strftime('%Y-%m-%d')}"
+        doc = self.db["usage"].find_one_and_update({"_id": key}, {"$inc": {"calls": 1}, "$setOnInsert": {"familyId": fid}},
+                                                   upsert=True, return_document=True)
+        return doc["calls"] <= self.daily_ai_limit
+
+
 def create_app(db=None, classify=classifier.classify, review=classifier.review_request, send_email=mailer.send,
                start_scheduler=False, label_search=classifier.classify_search) -> Flask:
     app = Flask(__name__)
     secret = os.environ.get("SECRET_KEY", "")
-    app.secret_key = secret  # signs the dashboard's sign-in cookie
-    device_token = os.environ.get("DEVICE_TOKEN", "")
-    if not secret or not device_token:
-        raise RuntimeError("SECRET_KEY and DEVICE_TOKEN must be set")
-    signer = URLSafeSerializer(secret, salt="site-decision")
+    if not secret:
+        raise RuntimeError("SECRET_KEY must be set")
+    app.secret_key = secret  # signs the website's sign-in cookie
+    app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_BYTES + 1024 * 1024
     if db is None:
         db = MongoClient(os.environ["MONGODB_URI"])[os.environ.get("MONGODB_DB", "focussprint")]
-    sites = db["sites"]
-    requests_log = db["requests"]
-    searches = db["searches"]
-    digests = db["digests"]
-    zone = ZoneInfo(os.environ.get("TIMEZONE", "America/Los_Angeles"))
-    digest_hour = int(os.environ.get("DIGEST_HOUR", "21"))
+    svc = Service(db, classify, review, label_search, send_email)
+    families, devices, sites, labels = db["families"], db["devices"], db["sites"], db["labels"]
+    members = db["members"]
+    requests_log, searches, digests = db["requests"], db["searches"], db["digests"]
+    for collection, keys in ((devices, "tokenHash"), (db["sprintStarts"], [("memberId", 1), ("startedAt", -1)]),
+                             (db["events"], "sprintId"), (sites, "scope"), (requests_log, [("memberId", 1), ("day", 1)]),
+                             (searches, [("memberId", 1), ("day", 1)]), (members, "familyId")):
+        try:
+            collection.create_index(keys)
+        except Exception:  # an index is a speed-up, never a reason not to start
+            pass
+    try:
+        db["accounts"].create_index("email", unique=True)
+    except Exception:
+        pass
 
-    def local_day(moment: datetime | None = None) -> str:
-        return (moment or datetime.now(timezone.utc)).astimezone(zone).strftime("%Y-%m-%d")
+    # --- Which Mac is calling ---------------------------------------------------------------
 
     def require_device():
+        """Every Mac has its own token, issued when the parent paired it. It decides the family."""
         sent = request.headers.get("Authorization", "")
-        if not hmac.compare_digest(sent, f"Bearer {device_token}"):
+        device = devices.find_one({"tokenHash": token_hash(sent[7:]), "revoked": {"$ne": True}}) if sent.startswith("Bearer ") else None
+        if device is None:
             abort(401)
+        family = families.find_one({"_id": device["familyId"]})
+        member = members.find_one({"_id": device.get("memberId"), "familyId": device["familyId"]})
+        if family is None or member is None:
+            abort(401)
+        g.fid, g.device, g.family, g.member = family["_id"], device, family, member
+        g.mid, g.scope = member["_id"], svc.scope(member)
+        if device.get("lastSeenAt", "") < iso(datetime.now(timezone.utc) - timedelta(minutes=1)):
+            devices.update_one({"_id": device["_id"]}, {"$set": {"lastSeenAt": now()}})
 
-    def public(doc: dict) -> dict:
-        out = {"host": doc["_id"], "state": doc["state"], "reason": doc.get("reason", ""),
-               "category": doc.get("category", ""), "updatedAt": doc.get("updatedAt", "")}
-        if doc.get("allowedUntil"):
-            out["allowedUntil"] = doc["allowedUntil"]  # older records: a window that applied to everyone
-        if doc.get("approvedFor"):
-            out["approvedFor"] = doc["approvedFor"]  # approved "needed for work" windows, one per child
-        return out
+    def who() -> tuple[str, str, str]:
+        """The Mac login name, the computer, and a label for who a request comes from. The member and the
+        computer's name are the ones set when it was linked, not anything the Mac claims."""
+        body = request.get_json(silent=True) or {}
+        user = str(body.get("user") or "").strip()[:60]
+        device = g.device.get("name") or "Mac"
+        return user, device, f"{g.member.get('name', 'Member')} on {device}"
 
     @app.get("/healthz")
     def healthz():
         return "ok"
 
+    @app.post("/api/pair")
+    def api_pair():
+        """Exchanges a pairing code from the parent's website for this Mac's own token."""
+        body = request.get_json(silent=True) or {}
+        if accounts.too_many_attempts(db, "pair"):
+            return jsonify(error="Too many attempts. Try again in a few minutes."), 429
+        code = re.sub(r"[^A-Z0-9]", "", str(body.get("code") or "").upper())
+        pairing = db["pairings"].find_one_and_update(
+            {"_id": code, "used": False, "expiresAt": {"$gt": now()}}, {"$set": {"used": True, "usedAt": now()}}) if code else None
+        if pairing is None:
+            accounts.note_attempt(db, "pair")
+            return jsonify(error="That code is not valid, or it has expired. Get a new one from the parent website."), 400
+        member = members.find_one({"_id": pairing["memberId"], "familyId": pairing["familyId"]}) or abort(400)
+        token = secrets.token_urlsafe(32)
+        name = " ".join(str(body.get("name") or "").split())[:80] or "Mac"
+        devices.insert_one({"_id": uuid.uuid4().hex, "familyId": member["familyId"], "memberId": member["_id"], "name": name,
+                            "tokenHash": token_hash(token), "pairedAt": now(), "lastSeenAt": now(), "revoked": False})
+        return jsonify(token=token, account=accounts.link_label(db, member), device=name,
+                       member={"name": member.get("name", ""), "kind": member.get("kind", "kid")})
+
+    @app.get("/api/config")
+    def api_config():
+        """What the Mac needs to know: who it is linked to and the parent's settings."""
+        require_device()
+        return jsonify(account=accounts.link_label(db, g.member), device=g.device.get("name", ""),
+                       member={"name": g.member.get("name", ""), "kind": g.member.get("kind", "kid")},
+                       settings=svc.settings_for(g.family, g.member))
+
+    @app.post("/api/upload/<session_id>/<name>")
+    def api_upload(session_id, name):
+        """Stores one record or picture from a Mac. Records are append-only: an existing one is never replaced."""
+        require_device()
+        if not SESSION_ID_RE.match(session_id) or not FILE_RE.match(name):
+            return jsonify(error="invalid name"), 400
+        data = request.get_data(cache=False)
+        if not data or len(data) > MAX_UPLOAD_BYTES:
+            return jsonify(error="empty or too large"), 400
+        if name.endswith(".json"):
+            try:
+                doc = json.loads(data)
+                assert isinstance(doc, dict)
+            except (ValueError, AssertionError):
+                return jsonify(error="not a JSON object"), 400
+            if name in ("start.json", "end.json"):
+                collection, doc["_id"] = db["sprintStarts" if name == "start.json" else "sprintEnds"], session_id
+                if name == "start.json":
+                    doc["device"] = g.device.get("name") or doc.get("device", "")
+            else:
+                collection, doc["_id"], doc["sprintId"] = db["events"], f"{session_id}-{name[:-5]}", session_id
+        else:
+            collection = db["media"]
+            doc = {"_id": f"{session_id}/{name}", "sprintId": session_id, "file": name, "size": len(data),
+                   "contentType": "video/mp4" if name.endswith(".mp4") else "image/jpeg", "data": Binary(data)}
+        doc["familyId"], doc["memberId"] = g.fid, g.mid
+        try:
+            collection.insert_one(doc)
+        except DuplicateKeyError:
+            # Already stored (a retry after a dropped connection) is fine; the same name under anyone else is not.
+            existing = collection.find_one({"_id": doc["_id"]}, {"memberId": 1})
+            if not existing or existing.get("memberId") != g.mid:
+                return jsonify(error="conflict"), 409
+        return jsonify(stored=True)
+
+    # --- Website labels -----------------------------------------------------------------------
+
+    def scoped_site(host: str, create_listed: bool = False) -> dict | None:
+        """The calling member's entry for a site. A label Claude gave once is shared by everyone; decisions are not."""
+        doc = sites.find_one({"_id": svc.site_id(g.scope, host)})
+        if doc is None and create_listed:
+            # On the member's own list of distractions, so it was never sent for a label.
+            doc = {"_id": svc.site_id(g.scope, host), "familyId": g.fid, "scope": g.scope, "host": host, "state": "distraction",
+                   "category": "", "reason": "", "source": "list", "createdAt": now(), "updatedAt": now()}
+            sites.update_one({"_id": doc["_id"]}, {"$setOnInsert": doc}, upsert=True)
+            doc = sites.find_one({"_id": doc["_id"]})
+        return doc
+
     @app.post("/api/classify")
     def api_classify():
         require_device()
-        body = request.get_json(silent=True) or {}
-        host = clean_host(body.get("host"))
+        host = clean_host((request.get_json(silent=True) or {}).get("host"))
         if not host:
             return jsonify(error="invalid host"), 400
-        doc = sites.find_one({"_id": host})
+        doc = scoped_site(host)
         if doc is None:
-            verdict = classify(host, str(body.get("title") or "")[:200])
-            if verdict is None:
-                return jsonify(error="not classified yet"), 503  # the helper keeps the request and retries
-            doc = {"_id": host, "state": verdict["label"], "category": verdict["category"],
-                   "reason": verdict["reason"], "source": "ai", "createdAt": now(), "updatedAt": now()}
-            sites.update_one({"_id": host}, {"$setOnInsert": doc}, upsert=True)
-            doc = sites.find_one({"_id": host})
-        return jsonify(public(doc))
+            label = labels.find_one({"_id": host})
+            if label is None:
+                if not svc.may_use_ai(g.fid):
+                    return jsonify(error="daily limit reached"), 429
+                verdict = classify(host, "")
+                if verdict is None:
+                    return jsonify(error="not classified yet"), 503  # the helper keeps the request and retries
+                label = {"_id": host, "label": verdict["label"], "category": verdict["category"],
+                         "reason": verdict["reason"], "createdAt": now()}
+                labels.update_one({"_id": host}, {"$setOnInsert": label}, upsert=True)
+                label = labels.find_one({"_id": host})
+            doc = {"_id": svc.site_id(g.scope, host), "familyId": g.fid, "scope": g.scope, "host": host, "state": label["label"],
+                   "category": label.get("category", ""), "reason": label.get("reason", ""), "source": "ai",
+                   "createdAt": now(), "updatedAt": now()}
+            sites.update_one({"_id": doc["_id"]}, {"$setOnInsert": doc}, upsert=True)
+            doc = sites.find_one({"_id": doc["_id"]})
+        return jsonify(svc.site_public(doc, g.mid))
+
+    @app.get("/api/sites")
+    def api_sites():
+        require_device()
+        return jsonify(sites=[svc.site_public(d, g.mid) for d in sites.find({"scope": g.scope}).limit(5000)])
 
     @app.post("/api/dispute")
     def api_dispute():
@@ -135,6 +305,7 @@ def create_app(db=None, classify=classifier.classify, review=classifier.review_r
         if not host or not reason:
             return jsonify(error="host and reason are required"), 400
         request_id = re.sub(r"[^a-z0-9-]", "", str(body.get("id") or "").lower())[:64] or uuid.uuid4().hex
+        stored_id = f"{g.fid}|{request_id}"
         wants_permanent = bool(body.get("permanent"))
         try:
             minutes = max(5, min(int(body.get("minutes") or 30), classifier.MAX_GRANT_MINUTES))
@@ -142,42 +313,40 @@ def create_app(db=None, classify=classifier.classify, review=classifier.review_r
             minutes = 30
 
         def answer(entry: dict):
-            site = sites.find_one({"_id": host})
-            return jsonify(site=public(site), answer={
-                "id": entry["_id"], "host": host, "decision": entry["decision"], "minutes": entry.get("grantedMinutes", 0),
+            site = sites.find_one({"_id": svc.site_id(g.scope, host)})
+            return jsonify(site=svc.site_public(site, g.mid), answer={
+                "id": request_id, "host": host, "decision": entry["decision"], "minutes": entry.get("grantedMinutes", 0),
                 "explanation": entry.get("explanation", ""), "allowedUntil": entry.get("allowedUntil", "")})
 
         # The helper re-sends after a dropped connection: the same request must get the same answer, once.
-        earlier = requests_log.find_one({"_id": request_id})
+        earlier = requests_log.find_one({"_id": stored_id})
         if earlier:
             return answer(earlier)
 
-        doc = sites.find_one({"_id": host})
-        if doc is None:
-            # On the parent's own list of distractions, so it was never sent for a label.
-            doc = {"_id": host, "state": "distraction", "category": "", "reason": "", "source": "list",
-                   "createdAt": now(), "updatedAt": now()}
-            sites.insert_one(doc)
-
-        user, device = str(body.get("user") or "").strip()[:60], str(body.get("device") or "").strip()[:80]
+        doc = scoped_site(host, create_listed=True)
+        user, device, label = who()
         moment = datetime.now(timezone.utc)
-        day = local_day(moment)
-        entry = {"_id": request_id, "host": host, "reason": reason, "requestedMinutes": minutes,
+        day = svc.local_day(g.family, moment)
+        entry = {"_id": stored_id, "familyId": g.fid, "memberId": g.mid, "member": g.member.get("name", ""),
+                 "host": host, "reason": reason, "requestedMinutes": minutes,
                  "wantsPermanent": wants_permanent, "at": iso(moment), "ts": moment.timestamp(), "day": day,
-                 "localTime": moment.astimezone(zone).strftime("%-I:%M %p"),
-                 "user": user, "device": device, "who": f"{user or 'Your child'} on {device or 'their Mac'}",
-                 "grantedMinutes": 0}
+                 "localTime": moment.astimezone(svc.zone(g.family)).strftime("%-I:%M %p"),
+                 "user": user, "device": device, "who": label, "grantedMinutes": 0}
 
         if doc["state"] == "locked":
-            entry.update(decision="deny", explanation="Your parent decided this site stays a distraction, so it cannot be approved here.")
+            entry.update(decision="deny", explanation=(
+                "A household admin decided this site stays a distraction, so it cannot be approved here." if g.member.get("kind") == "kid"
+                else "You set this site to always count as a distraction. Change that on the website if you want to."))
         elif doc["state"] in ("productive", "allowed"):
             entry.update(decision="approve_permanent", explanation="This site is already not counted as a distraction.")
-        elif requests_log.count_documents({"host": host, "day": day, "user": user}) >= MAX_REQUESTS_PER_SITE_PER_DAY:
-            entry.update(decision="deny", explanation="There have been several requests for this site today already. Talk to your parent if you still need it.")
+        elif requests_log.count_documents({"memberId": g.mid, "host": host, "day": day}) >= MAX_REQUESTS_PER_SITE_PER_DAY:
+            entry.update(decision="deny", explanation="There have been several requests for this site today already.")
+        elif not svc.may_use_ai(g.fid):
+            return jsonify(error="daily limit reached"), 429
         else:
-            # Each child's request is judged on that child's own history with the site.
-            history = list(requests_log.find({"host": host, "user": user}).sort("at", -1).limit(6))[::-1]
-            # A site the parent listed themselves can be approved for a while, but only the parent can clear it for good.
+            # Each member's request is judged on their own history with the site.
+            history = list(requests_log.find({"memberId": g.mid, "host": host}).sort("at", -1).limit(6))[::-1]
+            # A site on the household's own list can be approved for a while, but only a person can clear it for good.
             allow_permanent = doc.get("source") != "list" and not body.get("onParentList")
             verdict = review(host, doc.get("reason", ""), reason, minutes, wants_permanent, history, allow_permanent)
             if verdict is None:
@@ -191,17 +360,18 @@ def create_app(db=None, classify=classifier.classify, review=classifier.review_r
                 granted = max(5, min(verdict.get("minutes") or minutes, minutes, classifier.MAX_GRANT_MINUTES))
                 until = iso(moment + timedelta(minutes=granted))
                 entry["allowedUntil"] = until
-                # The window belongs to the child who asked; it does not open the site for anyone else.
-                sites.update_one({"_id": host}, {"$set": {f"approvedFor.{child_key(user)}": until, "updatedAt": now()}})
+                # The window belongs to the member who asked; it does not open the site for anyone else.
+                sites.update_one({"_id": doc["_id"]}, {"$set": {f"approvedFor.{g.mid}": until, "updatedAt": now()}})
             elif decision == "approve_permanent":
-                sites.update_one({"_id": host}, {"$set": {"state": "productive", "source": "request", "updatedAt": now()},
-                                                 "$unset": {"allowedUntil": "", "approvedFor": ""}})
+                # For this list only: everyone else's label for the same site is untouched.
+                sites.update_one({"_id": doc["_id"]}, {"$set": {"state": "productive", "source": "request", "updatedAt": now()},
+                                                     "$unset": {"approvedFor": ""}})
             entry.update(decision=decision, grantedMinutes=granted, explanation=verdict["explanation"][:600])
 
         try:
             requests_log.insert_one(entry)
         except DuplicateKeyError:
-            entry = requests_log.find_one({"_id": request_id})
+            entry = requests_log.find_one({"_id": stored_id})
         return answer(entry)
 
     @app.post("/api/search")
@@ -217,23 +387,28 @@ def create_app(db=None, classify=classifier.classify, review=classifier.review_r
         if not query:
             return jsonify(error="query is required"), 400
         search_id = re.sub(r"[^a-z0-9-]", "", str(body.get("id") or "").lower())[:64] or uuid.uuid4().hex
+        stored_id = f"{g.fid}|{search_id}"
 
         def reply(entry: dict):
-            return jsonify(id=entry["_id"], at=entry["at"], label=entry["label"], engine=entry.get("engine", ""),
+            return jsonify(id=search_id, at=entry["at"], label=entry["label"], engine=entry.get("engine", ""),
                            reason=entry.get("reason", ""), text=entry.get("text", ""))
 
-        earlier = searches.find_one({"_id": search_id})
+        earlier = searches.find_one({"_id": stored_id})
         if earlier:
             return reply(earlier)
+        if not svc.may_use_ai(g.fid):
+            return jsonify(error="daily limit reached"), 429
         task = str(body.get("task") or "")[:200]
-        user, device = str(body.get("user") or "").strip()[:60], str(body.get("device") or "").strip()[:80]
+        user, device, label = who()
         verdict = label_search(query, task)
         if verdict is None:
             return jsonify(error="not labelled yet"), 503  # the helper keeps the request and retries
         moment = datetime.now(timezone.utc)
-        entry = {"_id": search_id, "at": iso(moment), "ts": moment.timestamp(), "day": local_day(moment),
-                 "localTime": moment.astimezone(zone).strftime("%-I:%M %p"),
-                 "user": user, "device": device, "who": f"{user or 'Your child'} on {device or 'their Mac'}",
+        entry = {"_id": stored_id, "familyId": g.fid, "memberId": g.mid, "member": g.member.get("name", ""),
+                 "at": iso(moment), "ts": moment.timestamp(),
+                 "day": svc.local_day(g.family, moment),
+                 "localTime": moment.astimezone(svc.zone(g.family)).strftime("%-I:%M %p"),
+                 "user": user, "device": device, "who": label,
                  "engine": clean_host(body.get("engine")) or "", "label": verdict["label"], "inSprint": bool(task)}
         if verdict["label"] == "distraction":
             entry.update(text=query, reason=verdict["reason"], task=task)
@@ -242,73 +417,98 @@ def create_app(db=None, classify=classifier.classify, review=classifier.review_r
         try:
             searches.insert_one(entry)
         except DuplicateKeyError:
-            entry = searches.find_one({"_id": search_id})
+            entry = searches.find_one({"_id": stored_id})
         return reply(entry)
 
-    # --- Daily summary for the parent ---------------------------------------------------------
+    # --- Daily summary for each parent --------------------------------------------------------
 
-    def send_digest(day: str, force: bool = False) -> str:
-        """Sends the summary for one local day, at most once. Returns what happened."""
-        if not force:
-            try:
-                digests.insert_one({"_id": day, "claimedAt": now()})  # only one worker gets past this
-            except DuplicateKeyError:
-                return "already handled"
-        start = datetime.strptime(day, "%Y-%m-%d").replace(tzinfo=zone)
-        # Everything in the summary is listed newest first.
-        entries = list(requests_log.find({"day": day}).sort([("at", -1), ("ts", -1)]))
-        new_sites = list(sites.find({"source": "ai", "createdAt": {"$gte": iso(start), "$lt": iso(start + timedelta(days=1))}})
-                         .sort("createdAt", -1).limit(200))
-        day_searches = list(searches.find({"day": day}).sort([("at", -1), ("ts", -1)]))
-        off_topic = [x for x in day_searches if x["label"] == "distraction"]
+    def send_digest(family: dict, day: str, force: bool = False, only_member: str | None = None) -> dict:
+        """Sends a household's summaries for one of its local days, each at most once.
 
-        def child_of(record: dict) -> str:
-            return record.get("user") or record.get("who", "").split(" on ")[0] or "Your child"
-
-        children = []
-        for name in sorted({child_of(x) for x in entries + day_searches}):
-            mine = [x for x in day_searches if child_of(x) == name]
-            children.append({"name": name, "requests": [r for r in entries if child_of(r) == name],
-                             "counts": {k: sum(1 for x in mine if x["label"] == k) for k in ("work", "distraction", "personal")},
-                             "searches": [x for x in mine if x["label"] == "distraction"]})
-        # A day of nothing but schoolwork searches is not worth an email.
-        if not entries and not new_sites and not off_topic:
-            digests.update_one({"_id": day}, {"$set": {"result": "nothing to report"}})
-            return "nothing to report"
-        base = os.environ.get("PUBLIC_URL", "").rstrip("/")
-        subject, body_html = mailer.digest_email(start.strftime("%A %-d %B"), entries, new_sites,
-                                                 lambda host: f"{base}/decide?t={signer.dumps(host)}",
-                                                 children=children,
-                                                 dashboard_url=f"{base}/dashboard/day/{day}" if os.environ.get("PARENT_PASSWORD") else "")
-        if send_email(os.environ.get("PARENT_EMAIL", ""), subject, body_html):
-            digests.update_one({"_id": day}, {"$set": {"result": "sent", "sentAt": now()}}, upsert=True)
-            return "sent"
-        if not force:
-            digests.delete_one({"_id": day})  # let the next pass try again
-        return "email failed"
+        The admins and co-admins get one email covering the kids. Every adult member gets their own, about
+        themselves only. Returns what happened per summary.
+        """
+        fid = family["_id"]
+        start = datetime.strptime(day, "%Y-%m-%d").replace(tzinfo=svc.zone(family))
+        everyone = list(members.find({"familyId": fid}))
+        kids = [m for m in everyone if m.get("kind") == "kid"]
+        plans = []
+        if kids:
+            admins = [a["email"] for a in db["accounts"].find({"familyId": fid, "role": {"$in": ["admin", "coadmin"]}, "verified": True})]
+            plans.append(("kids", kids, f"k:{fid}", admins, True))
+        for adult in (m for m in everyone if m.get("kind") != "kid"):
+            account = db["accounts"].find_one({"memberId": adult["_id"], "verified": True})
+            if account:
+                plans.append((adult["_id"], [adult], f"m:{adult['_id']}", [account["email"]], False))
+        results = {}
+        for name, people, scope, recipients, about_kids in plans:
+            if only_member and only_member not in [p["_id"] for p in people]:
+                continue
+            key = f"{fid}|{name}|{day}"
+            if not force:
+                try:
+                    digests.insert_one({"_id": key, "familyId": fid, "claimedAt": now()})  # only one worker gets past this
+                except DuplicateKeyError:
+                    results[name] = "already handled"
+                    continue
+            ids = [p["_id"] for p in people]
+            # Everything in the summary is listed newest first.
+            entries = list(requests_log.find({"memberId": {"$in": ids}, "day": day}).sort([("at", -1), ("ts", -1)]))
+            day_searches = list(searches.find({"memberId": {"$in": ids}, "day": day}).sort([("at", -1), ("ts", -1)]))
+            new_sites = list(sites.find({"scope": scope, "source": "ai",
+                                         "createdAt": {"$gte": iso(start), "$lt": iso(start + timedelta(days=1))}})
+                             .sort("createdAt", -1).limit(200))
+            sections = []
+            for person in sorted(people, key=lambda p: p.get("name", "")):
+                mine = [x for x in day_searches if x.get("memberId") == person["_id"]]
+                section = {"name": person.get("name", "Member"), "requests": [r for r in entries if r.get("memberId") == person["_id"]],
+                           "counts": {k: sum(1 for x in mine if x["label"] == k) for k in ("work", "distraction", "personal")},
+                           "searches": [x for x in mine if x["label"] == "distraction"]}
+                if section["requests"] or sum(section["counts"].values()):
+                    sections.append(section)
+            # A day of nothing but schoolwork or work searches is not worth an email.
+            if not recipients or (not entries and not new_sites and not any(x["label"] == "distraction" for x in day_searches)):
+                digests.update_one({"_id": key}, {"$set": {"result": "nothing to report"}})
+                results[name] = "nothing to report"
+                continue
+            subject, body_html = mailer.digest_email(
+                start.strftime("%A %-d %B"), entries, new_sites,
+                lambda host, scope=scope: f"{svc.public_url}/decide?t={svc.signer.dumps([scope, host])}",
+                children=sections, dashboard_url=f"{svc.public_url}/dashboard/day/{day}", about_kids=about_kids)
+            sent = [send_email(to, subject, body_html) for to in recipients]
+            if any(sent):
+                digests.update_one({"_id": key}, {"$set": {"familyId": fid, "result": "sent", "sentAt": now()}}, upsert=True)
+                results[name] = "sent"
+            else:
+                if not force:
+                    digests.delete_one({"_id": key})  # let the next pass try again
+                results[name] = "email failed"
+        return results
 
     @app.post("/api/digest")
     def api_digest():
-        """Sends a day's summary right now (used for testing, or from an external scheduler)."""
+        """Sends the summary that covers the calling Mac's member for a day, right now (used for testing)."""
         require_device()
-        day = str((request.get_json(silent=True) or {}).get("day") or local_day())
+        day = str((request.get_json(silent=True) or {}).get("day") or svc.local_day(g.family))
         if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", day):
             return jsonify(error="day must be YYYY-MM-DD"), 400
-        return jsonify(day=day, result=send_digest(day, force=True))
+        results = send_digest(g.family, day, force=True, only_member=g.mid)
+        return jsonify(day=day, result=next(iter(results.values()), "nothing to report"))
 
     keep_days = max(1, int(os.environ.get("MEDIA_KEEP_DAYS", "14")))
 
     def cleanup_media() -> int:
-        """Deletes pictures and clips older than MEDIA_KEEP_DAYS. Returns how many were removed.
+        """Deletes pictures and clips older than MEDIA_KEEP_DAYS, for every family. Returns how many were removed.
 
         Only the picture files go. The record of every switch (site, times, how long) is kept, so the
         numbers for older days stay complete. A file's id starts with its session's date (yyyyMMdd).
         """
-        cutoff = (datetime.now(zone) - timedelta(days=keep_days)).strftime("%Y%m%d")
+        cutoff = (datetime.now(ZoneInfo(svc.default_zone)) - timedelta(days=keep_days)).strftime("%Y%m%d")
         return db["media"].delete_many({"_id": {"$regex": r"^\d{8}-", "$lt": cutoff}}).deleted_count
 
     app.cleanup_media = cleanup_media
     app.media_keep_days = keep_days
+    app.send_digest = send_digest
 
     def scheduler():
         last_cleanup = None
@@ -322,84 +522,21 @@ def create_app(db=None, classify=classifier.classify, review=classifier.review_r
                         logging.info("removed %d picture(s) older than %d days", removed, keep_days)
             except Exception:
                 logging.exception("media cleanup")
-            try:
-                local = datetime.now(timezone.utc).astimezone(zone)
-                if local.hour >= digest_hour:
-                    send_digest(local.strftime("%Y-%m-%d"))
-                # Catches up if the service was down at the end of yesterday.
-                send_digest((local - timedelta(days=1)).strftime("%Y-%m-%d"))
-            except Exception:
-                logging.exception("digest scheduler")
+            for family in list(families.find({})):
+                try:
+                    local = datetime.now(timezone.utc).astimezone(svc.zone(family))
+                    if local.hour >= int(family.get("digestHour", 21)):
+                        send_digest(family, local.strftime("%Y-%m-%d"))
+                    # Catches up if the service was down at the end of yesterday.
+                    send_digest(family, (local - timedelta(days=1)).strftime("%Y-%m-%d"))
+                except Exception:
+                    logging.exception("digest for family %s", family["_id"])
             time.sleep(300)
+
+    accounts.register(app, svc)
+    dashboard.register(app, svc, keep_days)
+    accounts.bootstrap_owner(svc)
 
     if start_scheduler:
         threading.Thread(target=scheduler, daemon=True, name="digest").start()
-
-    dashboard.register(app, db, zone, signer, keep_days)
-
-    @app.get("/api/sites")
-    def api_sites():
-        require_device()
-        return jsonify(sites=[public(d) for d in sites.find({}).limit(5000)])
-
-    def page(title: str, inner: str) -> str:
-        return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1"><title>{html.escape(title)}</title>
-<style>
-body{{font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;background:#f6f7f9;color:#1a1a1a;margin:0;padding:24px 16px}}
-main{{max-width:520px;margin:0 auto;background:#fff;border-radius:12px;padding:24px;box-shadow:0 1px 3px rgba(0,0,0,.08)}}
-h1{{font-size:20px;margin:0 0 4px}} .muted{{color:#666;font-size:14px}} blockquote{{margin:6px 0 16px;padding:10px 12px;background:#f3f4f6;border-radius:6px}}
-button{{display:block;width:100%;margin:10px 0 0;padding:12px;border:0;border-radius:8px;font-size:16px;font-weight:600;color:#fff;cursor:pointer}}
-.allow{{background:#15803d}} .distraction{{background:#b45309}} .pick{{outline:3px solid #1a1a1a;outline-offset:2px}}
-small{{display:block;font-weight:400;font-size:13px;opacity:.9;margin-top:2px}}
-</style></head><body><main>{inner}</main></body></html>"""
-
-    def host_from_token(token) -> str:
-        try:
-            return signer.loads(token or "")
-        except BadSignature:
-            abort(403)
-
-    @app.get("/decide")
-    def decide_page():
-        # Reading this page changes nothing, so link scanners in mail apps cannot make a decision by opening it.
-        token = request.args.get("t", "")
-        host = host_from_token(token)
-        doc = sites.find_one({"_id": host}) or abort(404)
-        picked = request.args.get("a", "")
-        e = html.escape
-        recent = list(requests_log.find({"host": host}).sort("at", -1).limit(3))
-        history = "".join(
-            f'<p class="muted">{e(r.get("day", ""))} {e(r.get("localTime", ""))} · {e(mailer.DECISION_LABEL.get(r["decision"], ""))}</p>'
-            f'<blockquote>{e(r.get("reason", ""))}</blockquote>' for r in recent)
-        active = [f"{who}, until {until} (UTC)" for who, until in (doc.get("approvedFor") or {}).items() if until > now()]
-        if doc.get("allowedUntil", "") > now():
-            active.append(f"everyone, until {doc['allowedUntil']} (UTC)")
-        window = f'<p class="muted">Approved for now: {e("; ".join(active))}</p>' if active else ""
-        buttons = "".join(
-            f'<button class="{a}{" pick" if a == picked else ""}" name="a" value="{a}">{e(label)}<small>{e(detail)}</small></button>'
-            for a, (label, detail) in DECISION_TEXT.items())
-        inner = f"""<h1>{e(host)}</h1><p class="muted">Currently: {e(STATE_TEXT.get(doc["state"], doc["state"]))}</p>
-{window}{f'<p class="muted">Why it was labelled</p><p>{e(doc.get("reason", ""))}</p>' if doc.get("reason") else ''}
-{history}
-<form method="post" action="/decide"><input type="hidden" name="t" value="{e(token)}">{buttons}</form>"""
-        return page(f"Decide: {host}", inner)
-
-    @app.post("/decide")
-    def decide():
-        host = host_from_token(request.form.get("t", ""))
-        action = request.form.get("a", "")
-        if action not in DECISIONS:
-            abort(400)
-        # The parent's word is final, so it also ends any approval window the reviewer granted.
-        result = sites.update_one({"_id": host}, {"$set": {
-            "state": DECISIONS[action], "source": "parent", "decidedAt": now(), "updatedAt": now()},
-            "$unset": {"allowedUntil": "", "approvedFor": ""}})
-        if result.matched_count == 0:
-            abort(404)
-        label, detail = DECISION_TEXT[action]
-        e = html.escape
-        return page("Saved", f"""<h1>Saved: {e(label)}</h1><p><b>{e(host)}</b>. {e(detail)}</p>
-<p class="muted">The Mac picks this up within a minute or two. To change it, open the link in the summary email again.</p>""")
-
     return app

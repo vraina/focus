@@ -10,9 +10,7 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: 3.13.2
-      - key: SECRET_KEY          # signs the links in the parent email
-        generateValue: true
-      - key: DEVICE_TOKEN        # paste the same value into Parent settings on the Mac
+      - key: SECRET_KEY          # signs sign-in cookies and the links in emails
         generateValue: true
       - key: MONGODB_URI         # an Atlas user with readWrite on the database below
         sync: false
@@ -24,10 +22,14 @@ services:
         sync: false
       - key: MAIL_FROM           # e.g. YoungWonks Focus <focus@yourdomain.com>, on a domain verified in Resend
         sync: false
-      - key: PARENT_EMAIL        # receives the daily summary; also the sign-in email for the dashboard
+      - key: PARENT_EMAIL        # the owner's account: created on first start, and the only one that can issue invitations
         sync: false
-      - key: PARENT_PASSWORD     # sign-in password for the web dashboard; leave unset to keep the dashboard off
+      - key: PARENT_PASSWORD     # the owner's first password (change it later under Settings on the website)
         sync: false
+      - key: DOWNLOAD_URL        # where parents download the Mac installer; shown on the Computers page
+        sync: false
+      - key: FAMILY_DAILY_AI_CALLS  # each family's daily allowance of Claude calls
+        value: "600"
       - key: PUBLIC_URL          # e.g. https://youngwonks-focus.onrender.com, used for the links in the email
         sync: false
       - key: TIMEZONE            # the family's time zone, decides when "end of day" is

@@ -3,8 +3,10 @@ import FocusSprintCore
 
 // Background helper. Installed as a LaunchDaemon so it runs as root:
 //   1. copies finished records from the inbox into the root-owned vault
-//   2. uploads them to MongoDB Atlas, retrying until the server confirms
-// Nothing leaves the vault's pending list until Atlas has acknowledged it.
+//   2. links this Mac to a household member when given a pairing code, and keeps the token root-only
+//   3. sends records, pictures and labelling requests to the family service, retrying until confirmed
+//   4. fetches the settings and website decisions that apply to that member
+// Nothing leaves the vault's pending list until the service has acknowledged it.
 
 setvbuf(stdout, nil, _IOLBF, 0)
 func log(_ message: String) {
@@ -18,101 +20,74 @@ do {
     log("cannot create \(vault.root.path): \(error)")
     exit(1)
 }
-log("vault helper started, root=\(vault.root.path) uid=\(getuid())")
-
-actor Uploader {
-    private var cloud: CloudStore?
-    private var cloudURI: String?
-    private(set) var lastUploadAt: Date?
-    private(set) var lastError: String?
-    private(set) var configured = false
-
-    func drain(_ vault: Vault) async {
-        guard let data = try? Data(contentsOf: Paths.secrets),
-              let secrets = try? JSONDecoder().decode(Secrets.self, from: data),
-              !secrets.mongoURI.trimmingCharacters(in: .whitespaces).isEmpty else {
-            configured = false
-            cloud = nil
-            return // no connection string yet: everything simply stays queued
-        }
-        configured = true
-        if cloud == nil || cloudURI != secrets.mongoURI {
-            cloud = CloudStore(uri: secrets.mongoURI, database: secrets.database)
-            cloudURI = secrets.mongoURI
-        }
-        for item in vault.pendingItems() {
-            guard let cloud else { return }
-            guard let payload = try? Data(contentsOf: item.source) else {
-                vault.markUploaded(item) // marker without a file: nothing to send
-                continue
-            }
-            do {
-                try await cloud.upload(sprintId: item.sprintId, file: item.file, data: payload)
-                vault.markUploaded(item)
-                lastUploadAt = Date()
-                lastError = nil
-            } catch {
-                // Offline or server trouble: keep the item, reconnect on the next pass.
-                let message = String(describing: error)
-                if message != lastError { log("upload paused: \(message)") }
-                lastError = message
-                self.cloud = nil
-                return
-            }
-        }
-    }
-
-    func status(pending: Int) -> HelperStatus {
-        HelperStatus(mongoConfigured: configured, pending: pending, lastUploadAt: lastUploadAt,
-                     lastError: lastError, updatedAt: Date())
-    }
-}
-
-let uploader = Uploader()
-let siteSync = SiteSync()
-siteSync.ensureDirectories()
+let sync = SiteSync()
+sync.ensureDirectories()
+log("helper started, root=\(vault.root.path) uid=\(getuid()) service=\(ServiceConfig.baseURL)")
 
 Task {
     var pass = 0
-    var serviceProblem: String?
-    var serviceChecked = false
+    var account: String?
+    var memberName: String?
+    var memberKind: String?
+    var deviceName: String?
+    var linkProblem: String?
+    var lastUploadAt: Date?
+    var lastError: String?
+    var checked = false
+
     while true {
-        let accepted = vault.ingestInbox()
-        if accepted > 0 { log("stored \(accepted) new file(s)") }
-        let waiting = vault.pendingItems().count
-        // Upload right after new files arrive, otherwise retry every 20 seconds.
-        if waiting > 0 && (accepted > 0 || pass % 40 == 0) {
-            await uploader.drain(vault)
+        let stored = vault.ingestInbox()
+        if stored > 0 { log("stored \(stored) new file(s)") }
+        let requests = sync.ingest()
+
+        if let service = SiteSync.config() {
+            // Linked. A pairing request now only gets an "already linked" answer.
+            await sync.pairIfRequested()
+            do {
+                if !checked || pass % 120 == 0 {
+                    // Once a minute: the parent's settings and website decisions. Also the link check.
+                    let who = try await sync.fetchSettings(service)
+                    (account, deviceName, linkProblem, checked) = (who.account, who.device, nil, true)
+                    (memberName, memberKind) = (who.member, who.kind)
+                    try await sync.refresh(service)
+                }
+                if linkProblem == nil, requests > 0 || pass % 120 == 0, sync.pendingCount > 0 {
+                    _ = await sync.drain(service)
+                }
+                if linkProblem == nil, stored > 0 || pass % 40 == 0 {
+                    for item in vault.pendingItems() {
+                        guard try await sync.upload(item, service) else { break } // busy or down: try again shortly
+                        vault.markUploaded(item)
+                        lastUploadAt = Date()
+                        lastError = nil
+                    }
+                }
+            } catch ServiceError.notLinked {
+                // The parent removed this computer, or the token is no longer valid. Keep everything queued.
+                if linkProblem == nil { log("the service no longer accepts this Mac") }
+                linkProblem = "This Mac was removed on the website. Unlink it here, then link it again with a new code."
+                checked = true
+            } catch {
+                let message = error.localizedDescription
+                if message != lastError { log("paused: \(message)") }
+                lastError = message
+            }
+        } else {
+            // Not linked yet: everything simply stays queued on this Mac until a parent links it.
+            (account, deviceName, linkProblem, checked) = (nil, nil, nil, false)
+            (memberName, memberKind) = (nil, nil)
+            if requests > 0 || pass % 4 == 0 { await sync.pairIfRequested() }
         }
-        if pass % 6 == 0 {
-            var status = await uploader.status(pending: vault.pendingItems().count)
-            status.serviceURL = SiteSync.config()?.serviceURL
-            status.serviceProblem = serviceProblem
+
+        if pass % 4 == 0 {
+            let status = HelperStatus(linked: SiteSync.config() != nil, account: account, memberName: memberName,
+                                      memberKind: memberKind, deviceName: deviceName,
+                                      linkProblem: linkProblem, pending: vault.pendingItems().count,
+                                      lastUploadAt: lastUploadAt, lastError: lastError)
             if let data = try? JSONCoding.encoder.encode(status) {
                 try? data.write(to: Paths.status, options: .atomic)
                 chmod(Paths.status.path, 0o644)
             }
-        }
-        // Site labels: send new requests straight away, retry the queue and pull parent decisions once a minute.
-        let newRequests = siteSync.ingest()
-        if let service = SiteSync.config(), newRequests > 0 || pass % 120 == 0 || !serviceChecked {
-            if siteSync.pendingCount > 0, let problem = await siteSync.drain(service) {
-                if pass % 1200 == 0 { log("family service unreachable: \(problem)") }
-            }
-            if pass % 120 == 0 || !serviceChecked {
-                // Doubles as the connection check shown in Parent settings.
-                do {
-                    try await siteSync.refresh(service)
-                    serviceProblem = nil
-                } catch {
-                    serviceProblem = (error as? URLError)?.code == .userAuthenticationRequired
-                        ? "the device token was not accepted" : error.localizedDescription
-                }
-                serviceChecked = true
-            }
-        } else if SiteSync.config() == nil {
-            serviceChecked = false // a newly saved address is checked straight away
-            serviceProblem = nil
         }
         if pass % 7200 == 0 { vault.prune(keepDays: ParentConfig.load().keepLocalDays) }
         pass += 1

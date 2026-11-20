@@ -4,6 +4,9 @@
 {% block body %}
 <h1>Websites</h1>
 <p class="muted">How each website seen so far is treated. "Change" opens the page where you can always allow it or keep it as a distraction.</p>
+{% if lists|length > 1 %}<div class="row" style="margin:14px 0 4px;gap:8px">{% for l in lists %}
+  <a class="chip {{ 'on' if picked == l.key }}" href="{{ url_for('sites_view', list=l.key) }}">{{ l.label }}</a>{% endfor %}</div>{% endif %}
+{% if picked == 'mine' %}<p class="muted small" style="margin:6px 0 0">Only you can see your own list.</p>{% endif %}
 <div class="stack" style="margin-top:18px">
 {% for s in sites %}
   <div class="card row">

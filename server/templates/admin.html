@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% set active = 'admin' %}
+{% block title %}Households · YoungWonks Focus{% endblock %}
+{% block body %}
+<h1>Households</h1>
+<p class="muted">Someone needs one of these codes to start a new household at <b>{{ signup_url }}</b>. Each code works once.</p>
+<form method="post" class="card row">
+  <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+  <input class="field" name="note" placeholder="Who is it for? (optional, only you see this)" style="flex:1;margin:0;min-width:200px">
+  <button class="btn">Create an invitation</button>
+</form>
+<h2>Invitation codes</h2>
+<div class="stack">
+{% for i in invites %}
+  <div class="card row"><span style="font:700 16px ui-monospace,Menlo,monospace;letter-spacing:1px">{{ i._id }}</span>
+    <span class="muted small" style="flex:1">{{ i.note }}</span>
+    {% if i.usedBy %}<span class="pill">Used by {{ i.usedBy }}</span>{% else %}<span class="pill good">Unused</span>
+      <a class="small" href="{{ signup_url }}?invite={{ i._id }}">Sign-up link</a>{% endif %}</div>
+{% else %}<div class="card muted">No invitations yet.</div>{% endfor %}
+</div>
+<h2>Existing households</h2>
+<p class="muted small" style="margin-top:-4px">You can see that a household exists and how big it is. You cannot see what anyone in another household records.</p>
+<div class="stack">
+{% for h in households %}
+  <div class="card row"><b style="flex:1">{{ h.email }}</b><span class="muted small">since {{ h.created }}</span>
+    <span class="pill {{ 'good' if h.verified else 'warn' }}">{{ 'Email confirmed' if h.verified else 'Email not confirmed' }}</span>
+    <span class="pill">{{ h.people }} {{ 'person' if h.people == 1 else 'people' }}</span>
+    <span class="pill">{{ h.computers }} computer{{ '' if h.computers == 1 else 's' }}</span></div>
+{% endfor %}
+</div>
+{% endblock %}

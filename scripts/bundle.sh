@@ -44,6 +44,13 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 PLIST
 # A real signing identity keeps the Screen Recording permission across rebuilds; ad-hoc signing resets it.
 IDENTITY="${SIGN_ID:-$(security find-identity -v -p codesigning 2>/dev/null | awk 'NR==1 && $2 ~ /^[0-9A-F]{40}$/ {print $2}')}"
-codesign --force --sign "${IDENTITY:--}" --identifier com.focussprint.vaultd build/focussprint-vaultd
-codesign --force --sign "${IDENTITY:--}" "$APP"
+if [ -n "${DEVELOPER_ID_APP:-}" ]; then
+    # For an installer other families download: Developer ID, hardened runtime and a timestamp, as notarisation requires.
+    IDENTITY="$DEVELOPER_ID_APP"
+    codesign --force --options runtime --timestamp --sign "$IDENTITY" --identifier com.focussprint.vaultd build/focussprint-vaultd
+    codesign --force --options runtime --timestamp --entitlements Resources/app.entitlements --sign "$IDENTITY" "$APP"
+else
+    codesign --force --sign "${IDENTITY:--}" --identifier com.focussprint.vaultd build/focussprint-vaultd
+    codesign --force --sign "${IDENTITY:--}" "$APP"
+fi
 echo "Built $APP ($CONFIG, signed with ${IDENTITY:-ad-hoc})"

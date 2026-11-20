@@ -3,22 +3,8 @@ import AVKit
 import SwiftUI
 import FocusSprintCore
 
-enum HistorySource: String, CaseIterable, Identifiable {
-    case local = "This Mac"
-    case cloud = "Cloud"
-    var id: String { rawValue }
-}
-
-enum CloudCache {
-    static var sprints: URL {
-        FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("FocusSprint/cloud/sprints", isDirectory: true)
-    }
-    static var store: CloudStore? {
-        guard let uri = Keychain.get("viewerURI"), !uri.isEmpty else { return nil }
-        return CloudStore(uri: uri)
-    }
-}
+/// Where History reads from. The Mac only shows what it recorded itself; the parent website shows every computer.
+enum HistorySource { case local }
 
 struct HistoryView: View {
     @EnvironmentObject var engine: SprintEngine
@@ -35,10 +21,6 @@ struct HistoryView: View {
     var body: some View {
         HStack(spacing: 0) {
             VStack(spacing: 10) {
-                Picker("", selection: $source) {
-                    ForEach(HistorySource.allCases) { Text($0.rawValue).tag($0) }
-                }
-                .pickerStyle(.segmented).labelsHidden()
                 if let message { Text(message).font(.system(size: 11)).foregroundStyle(.secondary) }
                 ScrollView {
                     LazyVStack(spacing: 6) {
@@ -71,7 +53,6 @@ struct HistoryView: View {
             .frame(minWidth: 440, maxWidth: .infinity)
         }
         .onAppear(perform: reload)
-        .onChange(of: source) { _, _ in reload() }
         .onChange(of: engine.phase) { _, _ in
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.2, execute: reload)
         }
@@ -100,39 +81,16 @@ struct HistoryView: View {
                 guard current != known else { return }
                 let list = SprintReader.listForDisplay(in: folder)
                 await MainActor.run {
-                    guard source == .local else { return }
                     fingerprint = current
                     show(list)
                 }
-            }
-        case .cloud:
-            fingerprint = 0
-            show(SprintReader.listForDisplay(in: CloudCache.sprints))
-            guard let store = CloudCache.store else {
-                message = "Add a read-only Atlas connection string under Parent settings to view cloud history."
-                return
-            }
-            guard !syncing else { return }
-            syncing = true
-            message = "Syncing…"
-            Task {
-                do {
-                    try await store.pull(into: CloudCache.sprints)
-                    message = nil
-                } catch {
-                    message = "Could not reach the cloud: \(error)"
-                }
-                syncing = false
-                if source == .cloud { show(SprintReader.listForDisplay(in: CloudCache.sprints)) }
             }
         }
     }
 
     private func show(_ list: [SprintRecord]) {
-        sites = SiteBook(file: source == .local ? Paths.sites
-                                                : CloudCache.sprints.deletingLastPathComponent().appendingPathComponent("sites.json"))
-        searches = SearchLog.load(from: source == .local ? Paths.searches
-            : CloudCache.sprints.deletingLastPathComponent().appendingPathComponent("searches.json"))
+        sites = SiteBook(file: Paths.sites)
+        searches = SearchLog.load()
         records = list
         if selection == nil || !list.contains(where: { $0.id == selection }) { selection = list.first?.id }
     }
@@ -548,12 +506,7 @@ struct MediaView: View {
         preview = Thumbnails.cached(url)
         ready = FileManager.default.fileExists(atPath: url.path)
         failed = false
-        if !ready {
-            guard source == .cloud, let store = CloudCache.store else { failed = true; return }
-            guard let data = try? await store.media(sprintId: sprintId, file: ref.file),
-                  (try? data.write(to: url, options: .atomic)) != nil else { failed = true; return }
-            ready = true
-        }
+        if !ready { failed = true; return }
         if ref.kind == .image, preview == nil {
             preview = await Thumbnails.load(url)
             failed = preview == nil

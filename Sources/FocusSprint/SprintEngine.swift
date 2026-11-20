@@ -234,7 +234,7 @@ final class SprintEngine: ObservableObject {
         do {
             try Inbox.drop(sprintId: sprint.id, file: "start.json", data: JSONCoding.encoder.encode(sprint))
         } catch {
-            startError = "Could not reach the YoungWonks Focus vault helper. Ask a parent to run the installer."
+            startError = "Could not reach the YoungWonks Focus helper. Run the installer again from an administrator account."
             return
         }
         startError = nil

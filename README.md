@@ -8,25 +8,50 @@ self-awareness: the teen reviews their own history, and cannot delete it.
 
 | Piece | Runs as | Job |
 |---|---|---|
-| `YoungWonks Focus.app` | the teen | Timer, switch detection, screen capture, floating meter, history |
-| `focussprint-vaultd` | root (LaunchDaemon) | Copies records into a root-owned vault, uploads them to Atlas |
-| MongoDB Atlas | cloud | Append-only copy: `sprintStarts`, `sprintEnds`, `events`, `media`; plus `sites` (labels and parent decisions) |
-| `server/` (Flask on Render) | cloud | Labels new websites with Claude, emails the parent, serves the decision pages |
+| `YoungWonks Focus.app` | the person using the Mac | Timer, switch detection, screen capture, floating meter, history |
+| `focussprint-vaultd` | root (LaunchDaemon) | Keeps records in a root-owned vault, holds this Mac's token, sends everything to the service |
+| `server/` (Flask on Render) | cloud | Accounts and households, storage, Claude labelling and reviews, daily summaries, the website |
+| MongoDB Atlas | cloud | The service's database. Only the service talks to it; no Mac ever has a database address |
 
 Records are written to disk first. The helper keeps each one queued in
-`/Library/Application Support/FocusSprint/vault` until Atlas confirms it, so a lost connection loses nothing.
+`/Library/Application Support/FocusSprint/vault` until the service confirms it, so a lost connection loses nothing.
 
-## Setup (parent, once)
+## Households
 
-1. **Atlas.** In the project you use for this:
-   - Database Access → Custom Roles → new role `focussprintWriter` with the single action `insert` on database `focussprint`.
-   - Add a database user with only that role. This is the connection string the Mac uploads with; it cannot delete or change anything.
-   - Optional: a second user with the built-in `read` role on `focussprint`, for the Cloud view in History.
-   - Network Access: allow the addresses the Mac will connect from.
-2. **The teen's Mac login must be a Standard account** (System Settings → Users & Groups). An Administrator can delete anything on the Mac, including the vault.
-3. From an Administrator account, in this folder: `scripts/install.sh`
-4. Log in as the teen, open YoungWonks Focus, grant Screen Recording (and Automation for the browser when asked).
-5. Parent settings tab → paste the insert-only connection string → Save (asks for the administrator password).
+A household has an **admin**, optional **co-admins**, and **members** who are kids or other adults.
+
+- Admins and co-admins sign in on the website, manage the household, and can see the **kids'** records.
+- An **adult** member signs in to see their own records. An adult's records are private: nobody else in the household
+  can see them, admins included. Admins are adults too, so their own computers are private in the same way.
+- **Kids** have no sign-in. An admin adds them under People and links their computers.
+- Accounts are by invitation. The service owner (the `PARENT_EMAIL` account) creates invitations for new households
+  under Households; a household's admin invites co-admins and adult members under People.
+- No household can see anything of another household. The service owner can see that a household exists and how
+  many people and computers it has, never what it records.
+
+### Linking a computer
+
+1. Install the app on the Mac from an administrator account (`scripts/install.sh`, or the installer package).
+2. On the website, open **Computers**, pick who uses the Mac, and choose **Get a code**.
+3. In the app, open **Account** and type the code. It works once, for 15 minutes.
+
+The Mac gets its own token, stored where only root can read it. No password is typed on the Mac. Linking again, or
+unlinking, needs the Mac administrator password, so a Standard login cannot move the Mac to another account. Removing
+a computer on the website stops it at once. One computer belongs to one member, whichever Mac login is in use.
+
+### Setup (service owner, once)
+
+1. Deploy the service (below) with `PARENT_EMAIL` and `PARENT_PASSWORD` set. On first start it creates your household,
+   with you as admin, and moves any records made before accounts existed into your own, private, profile.
+2. Sign in at the service's address. Add kids under People, link computers under Computers.
+3. Each Mac's login for a kid must be a Standard account. An Administrator can delete anything on the Mac.
+
+### The installer package
+
+`scripts/package.sh` builds `build/YoungWonksFocus.pkg`. Unsigned, it is fine for your own Macs. For other people to
+download and open it without warnings, it must be signed with Apple Developer ID certificates and notarised; the
+script does both when `DEVELOPER_ID_APP`, `DEVELOPER_ID_INSTALLER` and `NOTARY_PROFILE` are set. Put the finished
+file somewhere downloadable and set `DOWNLOAD_URL` so the Computers page links to it.
 
 ## Website labels and "Needed for work"
 
@@ -34,7 +59,7 @@ Nothing is ever blocked. The app records and shows; the parent sees the same num
 
 - A website seen for the first time is sent (host name only) to the family service, which asks Claude whether it is
   productive or a distraction for a school-age student. The answer is stored once and reused.
-- The parent's own list under Parent settings always wins over the AI label.
+- The list of distractions under Settings on the website always wins over the AI label.
 - On a distraction site the floating meter offers **Needed for work**. The student says why and for how long
   (15 minutes to 2 hours, or "always"). Claude reviews the request straight away and answers in a popup:
   - **Approved for a while**: the site does not count as a distraction until the time is up. Never longer than asked, 4 hours at most.
@@ -50,34 +75,25 @@ Nothing is ever blocked. The app records and shows; the parent sees the same num
 The app reads the search words from the tab address on Google, Bing, DuckDuckGo, Yahoo, Brave and Ecosia, and
 Claude labels each search as work, distraction or personal (during a sprint, judged against the sprint's task).
 
-- **Distraction** searches keep their words: shown in History and listed in the parent's daily summary.
+- **Distraction** searches keep their words: shown in History and listed in the daily summary.
 - **Work** searches are only counted.
 - **Personal** searches (health, feelings, relationships, identity and the like) are counted with no words and no
   hint of the topic, on the Mac and in the database, so a student can still look for help.
 
-### Parent dashboard (web)
+### The website
 
-The service has a read-only dashboard at its own address, for example `https://your-service.onrender.com/`.
-Sign in with `PARENT_EMAIL` and `PARENT_PASSWORD`; until `PARENT_PASSWORD` is set the dashboard stays off.
-
-- **Days:** the last 14 days, each with its distraction level, time away, switches and distraction searches.
+- **Days:** the last 14 days with distraction level, time away, switches and distraction searches.
 - **A day:** totals, sprints, web searches, "needed for work" requests and every switch away, newest first, with the
-  captured pictures. Clicking a picture opens a viewer with the date, start, time away and end, and previous / next.
-- **Websites:** how each site is treated, with a link to change it.
+  pictures and a viewer (date, start, time away, end, previous / next).
+- **Websites:** the kids' shared list (managed by admins) and each adult's own list, with a link to change a label.
+- **People** (admins): add kids, invite adults and co-admins.
+- **Computers:** link and remove computers.
+- **Settings:** what is captured and the list of distractions, separately for the kids' computers and for your own;
+  time zone and summary hour; your password.
 
-#### More than one computer or child
-
-Install the app on each Mac with the same service address, device token and Atlas database. A child is identified by
-their Mac login name, so give each child their own, distinct login.
-
-- The dashboard adds everything together by default and offers a filter per child, and per computer when a child uses
-  more than one. Each switch names the computer it came from when several are in view.
-- The daily summary has a section per child.
-- A "needed for work" approval, and the limit of five requests per site per day, belong to the child who asked.
-- Website labels and a parent's "always allow" / "always a distraction" decisions apply to everyone.
-
-It shows what the Mac has uploaded to Atlas, so the Mac's connection string and the service's `MONGODB_DB` must
-point at the same database. Eight wrong passwords from one address lock sign-in for 15 minutes.
+Admins choose between all kids, one kid, or "Me". Kids are never mixed with an adult's own records.
+The daily summary about the kids goes to every admin and co-admin; each adult gets their own.
+Each household has a daily allowance of Claude calls (`FAMILY_DAILY_AI_CALLS`).
 
 ### Storage and clean-up
 
@@ -89,19 +105,21 @@ The Mac keeps its own local copies for the "keep local days" setting, independen
 ### Deploying the service
 
 `render.yaml` (at the top of the repository) describes it. In Render: New → Blueprint → this repository, then fill in the variables marked
-`sync: false`: `MONGODB_URI` (an Atlas user with readWrite on `focussprint`), `ANTHROPIC_API_KEY`, `RESEND_API_KEY`,
-`MAIL_FROM` (an address on a domain verified in Resend), `PARENT_EMAIL`, `PUBLIC_URL` (the service's own address).
+`sync: false`: `MONGODB_URI` (an Atlas user with readWrite on the database), `ANTHROPIC_API_KEY`, `RESEND_API_KEY`,
+`MAIL_FROM` (an address on a domain verified in Resend), `PARENT_EMAIL` and `PARENT_PASSWORD` (the owner's account),
+`PUBLIC_URL` (the service's own address).
 Set `TIMEZONE` to the family's time zone. The daily summary is sent by the service itself, so it must stay awake (not a free plan that sleeps).
-Then copy `DEVICE_TOKEN` from Render and paste it, with the service address, into Parent settings on the Mac.
 
 Tests: `cd server && TEST_MONGODB_URI=mongodb://127.0.0.1:27017 .venv/bin/python -m pytest -q tests`
 
-## Parent-only settings and uninstalling
+## What a Standard login cannot do
 
-- The Parent settings tab stays locked until a Mac administrator password is entered, and locks again when you leave it.
-- `scripts/install.sh` installs the app, the helper and both launch files owned by root. A Standard account cannot
-  delete, move or replace any of them, and the app is restarted if it is quit.
-- Both of these depend on the teen's login being a Standard account. Do not share the administrator password.
+- Remove or replace the app, the helper or their launch files: the installer leaves them owned by root, and the app
+  is restarted if it is quit.
+- Unlink the Mac, or link it to a different account: both need the administrator password.
+- Read the Mac's token, or delete what is waiting to be sent.
+
+All of this depends on the login being a Standard account, and on the administrator password not being shared.
 
 ## Development
 

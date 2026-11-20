@@ -35,18 +35,29 @@ h1{font-size:28px;margin:0 0 4px;letter-spacing:-.3px} h2{font-size:12px;letter-
 .btn{display:inline-block;background:linear-gradient(135deg,var(--brand),var(--brand2));color:#fff;font-weight:700;border:0;border-radius:10px;padding:11px 16px;font-size:15px;cursor:pointer}
 .ghost{display:inline-block;border:1px solid var(--line);border-radius:9px;padding:7px 12px;color:var(--ink);font-weight:600;background:var(--surface)}
 .ghost.off{opacity:.35;pointer-events:none}
+.field{width:100%;padding:10px 12px;margin:4px 0 12px;border-radius:9px;border:1px solid var(--line);background:var(--canvas);color:var(--ink);font:inherit}
+textarea.field{min-height:120px;font-family:ui-monospace,Menlo,monospace;font-size:13px}
+label{font-size:13px;color:var(--soft);font-weight:600}
+.narrow{max-width:400px;margin:7vh auto 0} .ok{color:var(--good);font-weight:600} .err{color:var(--bad);font-weight:600}
+.code{font:700 34px/1 ui-monospace,Menlo,monospace;letter-spacing:4px;padding:16px 20px;border-radius:12px;background:var(--canvas);display:inline-block}
+header.bar nav{display:flex;flex-wrap:wrap}
 .chip{display:inline-block;padding:6px 12px;border-radius:99px;background:var(--surface);border:1px solid var(--line);color:var(--ink);font-weight:600;font-size:13px}
 .chip.sub{font-weight:500;color:var(--soft)} .chip.on{background:var(--brand);border-color:var(--brand);color:#fff}
 </style>
 {% block head %}{% endblock %}
 </head>
 <body>
-{% if session.get('parent') %}
+{% set me = current_account() %}
+{% if me %}
 <header class="bar"><div class="in">
   <span class="logo"></span><a class="brand" href="{{ url_for('overview') }}">YoungWonks Focus</a>
   <nav>
     <a href="{{ url_for('overview') }}" class="{{ 'on' if active == 'days' }}">Days</a>
     <a href="{{ url_for('sites_view') }}" class="{{ 'on' if active == 'sites' }}">Websites</a>
+    {% if is_admin(me) %}<a href="{{ url_for('people') }}" class="{{ 'on' if active == 'people' }}">People</a>{% endif %}
+    <a href="{{ url_for('computers') }}" class="{{ 'on' if active == 'computers' }}">Computers</a>
+    <a href="{{ url_for('settings') }}" class="{{ 'on' if active == 'settings' }}">Settings</a>
+    {% if me.role == 'admin' and service_owner(me) %}<a href="{{ url_for('admin') }}" class="{{ 'on' if active == 'admin' }}">Households</a>{% endif %}
   </nav>
   <form method="post" action="{{ url_for('logout') }}"><input type="hidden" name="csrf" value="{{ csrf_token() }}"><button class="linkbtn">Sign out</button></form>
 </div></header>

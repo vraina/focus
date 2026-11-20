@@ -11,6 +11,7 @@ struct SprintView: View {
     @State private var running: [AllowedApp] = []
     @State private var canRecord = CGPreflightScreenCaptureAccess()
     @State private var helperReady = Paths.helperInstalled
+    @State private var linked = HelperStatus.load()?.linked ?? true
 
     private var allowed: [AllowedApp] {
         (try? JSONDecoder().decode([AllowedApp].self, from: Data(allowedJSON.utf8))) ?? []
@@ -23,7 +24,11 @@ struct SprintView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 if !helperReady {
-                    Notice(text: "The YoungWonks Focus helper is not installed on this Mac. A parent needs to run scripts/install.sh once.", tint: Theme.bad)
+                    Notice(text: "The YoungWonks Focus helper is not installed on this Mac. Run the installer once from an administrator account.", tint: Theme.bad)
+                }
+                if helperReady && !linked {
+                    Notice(text: "This Mac is not linked to a household yet. Sprints still work and are kept here; open Account to link it.",
+                           tint: Theme.warn, icon: "link")
                 }
                 if !canRecord {
                     HStack(spacing: 10) {
@@ -51,6 +56,7 @@ struct SprintView: View {
     private func refresh() {
         canRecord = CGPreflightScreenCaptureAccess()
         helperReady = Paths.helperInstalled
+        linked = HelperStatus.load()?.linked ?? true
         let me = ProcessInfo.processInfo.processIdentifier
         var seen = Set<String>()
         running = NSWorkspace.shared.runningApplications

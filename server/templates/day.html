@@ -26,8 +26,8 @@
 <div class="row">
   <div><h1>{{ title }}</h1><div class="muted">The whole day: sprints, and time outside them. Newest first.</div></div>
   <div class="spread row">
-    <a class="ghost" href="{{ url_for('day_view', day=previous, **q) }}">‹ Earlier</a>
-    <a class="ghost {{ '' if following else 'off' }}" href="{{ url_for('day_view', day=following, **q) if following else '#' }}">Later ›</a>
+    <a class="ghost" href="{{ url_for('day_view', day=previous, **view.args) }}">‹ Earlier</a>
+    <a class="ghost {{ '' if following else 'off' }}" href="{{ url_for('day_view', day=following, **view.args) if following else '#' }}">Later ›</a>
   </div>
 </div>
 {% include "_filter.html" %}
