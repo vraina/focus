@@ -11,7 +11,7 @@ struct WhoAreYouView: View {
     @State private var message: String?
     @State private var showCode = false
     @State private var code = ""
-    private let poll = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
+    private let poll = Ticker.every1
 
     private var profiles: [HelperStatus.Profile] { status.profiles ?? [] }
 

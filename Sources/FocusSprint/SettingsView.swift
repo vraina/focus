@@ -35,7 +35,7 @@ struct SettingsView: View {
     @State private var startedWaiting = Date()
     @State private var message: String?
     @State private var messageIsError = false
-    private let poll = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
+    private let poll = Ticker.every1
 
     private var helperRunning: Bool { status?.isFresh == true }
     private var linked: Bool { status?.linked == true }
@@ -67,6 +67,19 @@ struct SettingsView: View {
         }
         .onReceive(poll) { _ in refresh() }
         .onAppear(perform: refresh)
+        #if DEBUG
+        .onAppear {
+            // For testing the link screen without typing: submits the given code once the screen opens.
+            if let auto = ProcessInfo.processInfo.environment["FOCUSSPRINT_AUTOLINK"], waitingFor == nil, message == nil {
+                code = auto
+                link()
+                FileHandle.standardError.write(Data("autolink: submitted\n".utf8))
+            }
+        }
+        .onChange(of: linked) { _, new in FileHandle.standardError.write(Data("autolink: linked card shown = \(new), still waiting = \(waitingFor != nil)\n".utf8)) }
+        .onChange(of: waitingFor) { _, new in FileHandle.standardError.write(Data("autolink: waiting = \(new != nil)\n".utf8)) }
+        .onChange(of: message) { _, new in FileHandle.standardError.write(Data("autolink: message = \(new ?? "nil")\n".utf8)) }
+        #endif
     }
 
     // MARK: Not linked yet
@@ -156,12 +169,21 @@ struct SettingsView: View {
     private func refresh() {
         status = HelperStatus.load()
         guard let id = waitingFor else { return }
-        if let result = PairingResult.load(), result.id == id {
+        if status?.linked == true, PairingResult.load()?.id != id, Date().timeIntervalSince(startedWaiting) > 5 {
+            // The computer is linked but the helper's note about this attempt is missing: say so plainly.
             waitingFor = nil
-            message = result.message
+            message = nil // the linked card that has replaced the form says it
+            code = ""
+        } else if let result = PairingResult.load(), result.id == id {
+            // Accepted: stay on "Linking…" for the moment it takes the helper to report whose login this is,
+            // so the form is replaced by the linked card rather than by a line of text under it.
+            if result.ok, status?.linked != true || (status?.memberName ?? "").isEmpty,
+               Date().timeIntervalSince(startedWaiting) < 20 { return }
+            waitingFor = nil
+            message = result.ok && status?.linked == true ? nil : result.message
             messageIsError = !result.ok
             if result.ok { code = "" }
-        } else if Date().timeIntervalSince(startedWaiting) > 40 {
+        } else if Date().timeIntervalSince(startedWaiting) > 60 {
             waitingFor = nil
             message = "No answer from the helper. Check that the Mac is online and try again."
             messageIsError = true

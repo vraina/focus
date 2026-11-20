@@ -115,7 +115,7 @@ enum Pane: String, CaseIterable, Identifiable {
 struct ContentView: View {
     @EnvironmentObject var engine: SprintEngine
     @State private var status = HelperStatus.load()
-    private let statusTimer = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
+    private let statusTimer = Ticker.every2
     @State var pane: Pane = Pane(rawValue: ProcessInfo.processInfo.environment["FOCUSSPRINT_PANE"] ?? "") ?? .focus
 
     var body: some View {

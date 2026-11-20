@@ -132,6 +132,9 @@ Task {
                         // Once a minute: whose login this is, their settings and website decisions.
                         let identity = try await sync.fetchSettings(service)
                         (state.identity, state.linkProblem, state.checked) = (identity, nil, true)
+                        // Tell the app at once whose login this is, before the (possibly long) uploads below:
+                        // right after a code is entered, this is what turns the link form into the linked card.
+                        report(state, vault)
                         if !identity.member.isEmpty { try await sync.refresh(service) }
                     }
                     // Nothing is sent for a login until someone has said whose it is.

@@ -16,7 +16,7 @@ struct HistoryView: View {
     @State private var message: String?
     @State private var syncing = false
     @State private var fingerprint = 0
-    private let refreshTimer = Timer.publish(every: 3, on: .main, in: .common).autoconnect()
+    private let refreshTimer = Ticker.every3
 
     var body: some View {
         HStack(spacing: 0) {
