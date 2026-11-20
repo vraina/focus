@@ -63,7 +63,7 @@ def clean_host(raw) -> str | None:
 
 
 def create_app(db=None, classify=classifier.classify, review=classifier.review_request, send_email=mailer.send,
-               start_scheduler=False) -> Flask:
+               start_scheduler=False, label_search=classifier.classify_search) -> Flask:
     app = Flask(__name__)
     secret = os.environ.get("SECRET_KEY", "")
     device_token = os.environ.get("DEVICE_TOKEN", "")
@@ -74,6 +74,7 @@ def create_app(db=None, classify=classifier.classify, review=classifier.review_r
         db = MongoClient(os.environ["MONGODB_URI"])[os.environ.get("MONGODB_DB", "focussprint")]
     sites = db["sites"]
     requests_log = db["requests"]
+    searches = db["searches"]
     digests = db["digests"]
     zone = ZoneInfo(os.environ.get("TIMEZONE", "America/Los_Angeles"))
     digest_hour = int(os.environ.get("DIGEST_HOUR", "21"))
@@ -191,6 +192,46 @@ def create_app(db=None, classify=classifier.classify, review=classifier.review_r
             entry = requests_log.find_one({"_id": request_id})
         return answer(entry)
 
+    @app.post("/api/search")
+    def api_search():
+        """Labels one web search as work, distraction or personal.
+
+        The search words are stored only for distraction searches. Work searches are counted, and personal
+        ones are counted without their words or any hint of the topic, so a student can still look for help.
+        """
+        require_device()
+        body = request.get_json(silent=True) or {}
+        query = " ".join(str(body.get("query") or "").split())[:300]
+        if not query:
+            return jsonify(error="query is required"), 400
+        search_id = re.sub(r"[^a-z0-9-]", "", str(body.get("id") or "").lower())[:64] or uuid.uuid4().hex
+
+        def reply(entry: dict):
+            return jsonify(id=entry["_id"], at=entry["at"], label=entry["label"], engine=entry.get("engine", ""),
+                           reason=entry.get("reason", ""), text=entry.get("text", ""))
+
+        earlier = searches.find_one({"_id": search_id})
+        if earlier:
+            return reply(earlier)
+        task = str(body.get("task") or "")[:200]
+        verdict = label_search(query, task)
+        if verdict is None:
+            return jsonify(error="not labelled yet"), 503  # the helper keeps the request and retries
+        moment = datetime.now(timezone.utc)
+        entry = {"_id": search_id, "at": iso(moment), "day": local_day(moment),
+                 "localTime": moment.astimezone(zone).strftime("%-I:%M %p"),
+                 "who": f"{str(body.get('user') or 'Your child')[:60]} on {str(body.get('device') or 'their Mac')[:80]}",
+                 "engine": clean_host(body.get("engine")) or "", "label": verdict["label"], "inSprint": bool(task)}
+        if verdict["label"] == "distraction":
+            entry.update(text=query, reason=verdict["reason"], task=task)
+        elif verdict["label"] == "work":
+            entry["reason"] = verdict["reason"]
+        try:
+            searches.insert_one(entry)
+        except DuplicateKeyError:
+            entry = searches.find_one({"_id": search_id})
+        return reply(entry)
+
     # --- Daily summary for the parent ---------------------------------------------------------
 
     def send_digest(day: str, force: bool = False) -> str:
@@ -204,12 +245,17 @@ def create_app(db=None, classify=classifier.classify, review=classifier.review_r
         entries = list(requests_log.find({"day": day}).sort("at", 1))
         new_sites = list(sites.find({"source": "ai", "createdAt": {"$gte": iso(start), "$lt": iso(start + timedelta(days=1))}})
                          .sort("_id", 1).limit(200))
-        if not entries and not new_sites:
+        day_searches = list(searches.find({"day": day}).sort("at", 1))
+        counts = {label: sum(1 for x in day_searches if x["label"] == label) for label in ("work", "distraction", "personal")}
+        off_topic = [x for x in day_searches if x["label"] == "distraction"]
+        # A day of nothing but schoolwork searches is not worth an email.
+        if not entries and not new_sites and not off_topic:
             digests.update_one({"_id": day}, {"$set": {"result": "nothing to report"}})
             return "nothing to report"
         base = os.environ.get("PUBLIC_URL", "").rstrip("/")
         subject, body_html = mailer.digest_email(start.strftime("%A %-d %B"), entries, new_sites,
-                                                 lambda host: f"{base}/decide?t={signer.dumps(host)}")
+                                                 lambda host: f"{base}/decide?t={signer.dumps(host)}",
+                                                 search_counts=counts, distraction_searches=off_topic)
         if send_email(os.environ.get("PARENT_EMAIL", ""), subject, body_html):
             digests.update_one({"_id": day}, {"$set": {"result": "sent", "sentAt": now()}}, upsert=True)
             return "sent"

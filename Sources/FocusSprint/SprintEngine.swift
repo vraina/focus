@@ -163,6 +163,32 @@ final class SprintEngine: ObservableObject {
         }
     }
 
+    // MARK: Searches
+
+    private var seenSearches: [String: Date] = [:]
+    private var searchesStamp: Date?
+    /// Today's labelled searches.
+    private(set) var searchCounts: (work: Int, distraction: Int, personal: Int) = (0, 0, 0)
+
+    /// When the tab in front is a search results page, sends the search for labelling (once per search).
+    private func noteSearch(_ context: ActivityContext) {
+        guard context.isBrowser, let address = context.url, let found = SearchQuery.parse(address) else { return }
+        let key = found.query.lowercased()
+        if let last = seenSearches[key], Date().timeIntervalSince(last) < 1800 { return }
+        seenSearches[key] = Date()
+        try? SiteRequest(kind: "search", host: found.engine, user: NSUserName(), device: Host.current().localizedName ?? "Mac",
+                         id: UUID().uuidString.lowercased(), query: found.query,
+                         task: phase == .running ? start?.task : nil).drop()
+    }
+
+    private func reloadSearchesIfChanged() {
+        let stamp = (try? FileManager.default.attributesOfItem(atPath: Paths.searches.path))?[.modificationDate] as? Date
+        guard stamp != searchesStamp else { return }
+        searchesStamp = stamp
+        let today = SearchLog.load().filter { ($0.date ?? .distantPast) >= day }
+        searchCounts = SearchLog.counts(today)
+    }
+
     /// Asks for an AI label the first time a site is seen. True while the answer is still on its way.
     private func awaitingLabel(_ context: ActivityContext, rules: FocusRules) -> Bool {
         guard context.isBrowser, let host = context.host, SiteRequest.isValidHost(host),
@@ -303,10 +329,13 @@ final class SprintEngine: ObservableObject {
             day = today
             baseSprint = 0; baseAway = 0; baseSwitches = 0
             awayByHost = [:]
+            searchesStamp = nil
+            searchCounts = (0, 0, 0)
         }
         if pulse % 4 == 0 {
             reloadSitesIfChanged()
             collectAnswers()
+            reloadSearchesIfChanged()
         }
         switch phase {
         case .running:
@@ -343,7 +372,10 @@ final class SprintEngine: ObservableObject {
         }
         guard let rules = ambientRules else { return }
         let context = SprintEngine.screenUnavailable ? nil : monitor.current()
-        if let context { _ = awaitingLabel(context, rules: rules) }
+        if let context {
+            _ = awaitingLabel(context, rules: rules)
+            noteSearch(context)
+        }
         let distracted = context.map { rules.isKnownDistraction($0, sites: sites) } ?? false
         // Watching a video means no typing or mouse movement, so idle time only ends "in use" when
         // the thing on screen is not a known distraction.
@@ -411,6 +443,7 @@ final class SprintEngine: ObservableObject {
 
     private func observe() {
         guard let rules, let context = monitor.current() else { return }
+        noteSearch(context)
         let now = Date()
         switch rules.classify(context, sites: sites, awaitingLabel: awaitingLabel(context, rules: rules)) {
         case .neutral:

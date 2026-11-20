@@ -110,7 +110,7 @@ public struct ServiceConfig: Codable, Sendable {
 }
 
 public struct SiteRequest: Codable, Sendable {
-    public var kind: String // "classify" or "dispute"
+    public var kind: String // "classify", "dispute" or "search"
     public var host: String
     public var reason: String?
     public var user: String?
@@ -119,11 +119,16 @@ public struct SiteRequest: Codable, Sendable {
     public var minutes: Int?
     public var permanent: Bool?
     public var onParentList: Bool?
+    /// Searches only: the search words, and the sprint task they were made during (if any).
+    public var query: String?
+    public var task: String?
 
     public init(kind: String, host: String, reason: String? = nil, user: String? = nil, device: String? = nil,
-                id: String? = nil, minutes: Int? = nil, permanent: Bool? = nil, onParentList: Bool? = nil) {
+                id: String? = nil, minutes: Int? = nil, permanent: Bool? = nil, onParentList: Bool? = nil,
+                query: String? = nil, task: String? = nil) {
         self.kind = kind; self.host = host; self.reason = reason; self.user = user; self.device = device
         self.id = id; self.minutes = minutes; self.permanent = permanent; self.onParentList = onParentList
+        self.query = query; self.task = task
     }
 
     public static func isValidHost(_ host: String) -> Bool {
@@ -133,7 +138,7 @@ public struct SiteRequest: Codable, Sendable {
     /// App side. The helper picks the file up, so the app never needs the service token.
     public func drop() throws {
         guard SiteRequest.isValidHost(host) else { throw CocoaError(.fileWriteInvalidFileName) }
-        let name = kind == "classify" ? "classify-\(host).json" : "dispute-\(id ?? UUID().uuidString.lowercased()).json"
+        let name = kind == "classify" ? "classify-\(host).json" : "\(kind)-\(id ?? UUID().uuidString.lowercased()).json"
         let tmp = Paths.requests.appendingPathComponent(".tmp-\(UUID().uuidString)")
         try JSONEncoder().encode(self).write(to: tmp)
         try FileManager.default.moveItem(at: tmp, to: Paths.requests.appendingPathComponent(name))
@@ -175,17 +180,17 @@ public final class SiteSync {
             let src = Paths.requests.appendingPathComponent(name)
             if name.hasPrefix(".tmp-") { continue }
             defer { unlink(src.path) }
-            guard name.range(of: #"^(classify|dispute)-[a-z0-9.-]{1,260}\.json$"#, options: .regularExpression) != nil else { continue }
+            guard name.range(of: #"^(classify|dispute|search)-[a-z0-9.-]{1,260}\.json$"#, options: .regularExpression) != nil else { continue }
             let fd = open(src.path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK)
             guard fd >= 0 else { continue }
             let handle = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
             var st = stat()
             guard fstat(fd, &st) == 0, (st.st_mode & S_IFMT) == S_IFREG, st.st_size > 0, st.st_size < 8192,
                   let data = try? handle.readToEnd(), let req = try? JSONDecoder().decode(SiteRequest.self, from: data),
-                  SiteRequest.isValidHost(req.host), req.kind == "classify" || req.kind == "dispute" else { continue }
+                  SiteRequest.isValidHost(req.host), ["classify", "dispute", "search"].contains(req.kind) else { continue }
             let dest = Paths.outbox.appendingPathComponent(name)
             if !fm.fileExists(atPath: dest.path), (try? data.write(to: dest, options: .atomic)) != nil {
-                chmod(dest.path, 0o644)
+                chmod(dest.path, 0o600)
                 accepted += 1
             }
         }
@@ -225,7 +230,17 @@ public final class SiteSync {
             body["permanent"] = req.permanent ?? false
             body["onParentList"] = req.onParentList ?? false
         }
+        if req.kind == "search" {
+            body = ["id": req.id ?? "", "query": req.query ?? "", "engine": req.host, "task": req.task ?? "",
+                    "user": req.user ?? "", "device": req.device ?? ""]
+        }
         let (data, status) = try await call(config, path: "/api/\(req.kind)", json: body)
+        if status == 200, req.kind == "search" {
+            guard var entry = try? JSONDecoder().decode(SearchEntry.self, from: data) else { throw URLError(.cannotParseResponse) }
+            if entry.text?.isEmpty == true { entry.text = nil }
+            record(entry)
+            return .done
+        }
         if status == 200, req.kind == "dispute" {
             struct Reply: Decodable { var site: SiteEntry; var answer: RequestAnswer }
             guard let reply = try? JSONDecoder().decode(Reply.self, from: data) else { throw URLError(.cannotParseResponse) }
@@ -272,6 +287,15 @@ public final class SiteSync {
         guard let data = try? JSONEncoder().encode(AnswerList(answers: Array(answers.suffix(50)))) else { return }
         try? data.write(to: Paths.answers, options: .atomic)
         chmod(Paths.answers.path, 0o644)
+    }
+
+    /// The labelled search, for History and the widget. The words are already gone unless it was a distraction.
+    private func record(_ entry: SearchEntry) {
+        var all = SearchLog.load().filter { $0.id != entry.id }
+        all.append(entry)
+        guard let data = try? JSONEncoder().encode(SearchLog(searches: Array(all.suffix(3000)))) else { return }
+        try? data.write(to: Paths.searches, options: .atomic)
+        chmod(Paths.searches.path, 0o644)
     }
 
     private func merge(_ entries: [SiteEntry]) {

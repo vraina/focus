@@ -121,6 +121,14 @@ public actor CloudStore {
         try fm.createDirectory(at: cacheSprints, withIntermediateDirectories: true)
         try JSONEncoder().encode(SiteList(sites: sites))
             .write(to: cacheSprints.deletingLastPathComponent().appendingPathComponent("sites.json"), options: .atomic)
+        // Labelled searches (distraction text only; the service never stores the rest).
+        let found = try await db["searches"].find().sort(["at": -1]).limit(3000).drain().compactMap { doc -> SearchEntry? in
+            guard let id = doc["_id"] as? String, let at = doc["at"] as? String, let label = doc["label"] as? String else { return nil }
+            return SearchEntry(id: id, at: at, label: label, engine: doc["engine"] as? String,
+                               reason: doc["reason"] as? String, text: doc["text"] as? String)
+        }
+        try JSONEncoder().encode(SearchLog(searches: found.reversed()))
+            .write(to: cacheSprints.deletingLastPathComponent().appendingPathComponent("searches.json"), options: .atomic)
         try save(events, file: { ($0["seq"] as? Int).map { "e\($0).json" } ?? ($0["seq"] as? Int32).map { "e\($0).json" } },
                  sprint: { $0["sprintId"] as? String })
     }

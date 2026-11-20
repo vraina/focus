@@ -45,6 +45,16 @@ Nothing is ever blocked. The app records and shows; the parent sees the same num
   an **Overrule** link to a page with **Always allow** and **Always a distraction**; a parent's choice is final.
 - History and the meter show the totals twice: everything as recorded, and leaving out sites approved since.
 
+### Web searches
+
+The app reads the search words from the tab address on Google, Bing, DuckDuckGo, Yahoo, Brave and Ecosia, and
+Claude labels each search as work, distraction or personal (during a sprint, judged against the sprint's task).
+
+- **Distraction** searches keep their words: shown in History and listed in the parent's daily summary.
+- **Work** searches are only counted.
+- **Personal** searches (health, feelings, relationships, identity and the like) are counted with no words and no
+  hint of the topic, on the Mac and in the database, so a student can still look for help.
+
 ### Deploying the service
 
 `render.yaml` (at the top of the repository) describes it. In Render: New → Blueprint → this repository, then fill in the variables marked

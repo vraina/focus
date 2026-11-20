@@ -40,11 +40,20 @@ def ctx():
             return {"decision": "approve_permanent", "minutes": 0, "explanation": "This is a reference site."}
         return {"decision": "deny", "minutes": 0, "explanation": "Say what you need it for."}
 
+    def fake_search(query, task=""):
+        if "flaky" in query:
+            return None
+        if "anxiety" in query:
+            return {"label": "personal", "reason": "Private topic."}
+        if "nba" in query.lower():
+            return {"label": "distraction", "reason": "Sports scores are not part of the task."}
+        return {"label": "work", "reason": "Fits schoolwork."}
+
     def fake_send(to, subject, body):
         emails.append({"to": to, "subject": subject, "body": body})
         return True
 
-    app = create_app(db=mongo[name], classify=fake_classify, review=fake_review, send_email=fake_send)
+    app = create_app(db=mongo[name], classify=fake_classify, review=fake_review, send_email=fake_send, label_search=fake_search)
     yield app.test_client(), mongo[name], calls, emails, reviews
     mongo.drop_database(name)
 
@@ -173,3 +182,46 @@ def test_parent_can_overrule(ctx):
     assert client.post("/decide", data={"t": token, "a": "block"}).status_code == 400
     assert client.post("/decide", data={"t": token + "x", "a": "allow"}).status_code == 403
     assert client.get("/decide?t=forged").status_code == 403
+
+
+def search(client, query, **extra):
+    return client.post("/api/search", json={"query": query, "engine": "google.com", "user": "sam", "device": "Mac", **extra},
+                       headers=AUTH)
+
+
+def test_search_labels_and_what_is_kept(ctx):
+    client, db, *_ = ctx
+    assert client.post("/api/search", json={"query": "x"}).status_code == 401
+    assert search(client, "   ").status_code == 400
+    assert search(client, "flaky lookup").status_code == 503
+
+    work = search(client, "quadratic formula examples", id="s1", task="Algebra homework")
+    assert work.json["label"] == "work" and work.json["text"] == ""
+    fun = search(client, "NBA scores tonight", id="s2", task="Algebra homework")
+    assert fun.json["label"] == "distraction" and fun.json["text"] == "NBA scores tonight"
+    private = search(client, "how to deal with anxiety", id="s3")
+    assert private.json == {"id": "s3", "at": private.json["at"], "label": "personal", "engine": "google.com",
+                            "reason": "", "text": ""}
+
+    # Only the distraction search keeps its words in the database.
+    assert "text" not in db["searches"].find_one({"_id": "s1"})
+    assert db["searches"].find_one({"_id": "s2"})["text"] == "NBA scores tonight"
+    stored = db["searches"].find_one({"_id": "s3"})
+    assert "text" not in stored and "anxiety" not in str(stored)
+    # A retry of the same search is answered from the record, not labelled again.
+    assert search(client, "NBA scores tonight", id="s2").json["at"] == fun.json["at"]
+    assert db["searches"].count_documents({}) == 3
+
+
+def test_searches_in_daily_digest(ctx):
+    client, db, _, emails, _ = ctx
+    search(client, "photosynthesis diagram")
+    search(client, "how to deal with anxiety")
+    # Schoolwork and private searches alone do not trigger an email.
+    assert client.post("/api/digest", json={}, headers=AUTH).json["result"] == "nothing to report"
+    search(client, "NBA scores <tonight>", task="Algebra homework")
+    assert client.post("/api/digest", json={}, headers=AUTH).json["result"] == "sent"
+    body = emails[-1]["body"]
+    assert "NBA scores &lt;tonight&gt;" in body and "Algebra homework" in body
+    assert "<b>1</b> for work" in body and "<b>1</b> private" in body
+    assert "anxiety" not in body and "photosynthesis" not in body

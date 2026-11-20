@@ -66,6 +66,9 @@ struct MeterView: View {
                 if engine.todayAwayUnderReview >= 1 {
                     Text("Leaving out sites approved since: \(Int((engine.todayDistractionStrict * 100).rounded()))%")
                 }
+                if engine.searchCounts.work + engine.searchCounts.distraction > 0 {
+                    Text("Searches: \(engine.searchCounts.work) work · \(engine.searchCounts.distraction) distraction")
+                }
             }
             .font(.system(size: 10)).foregroundStyle(.secondary)
         }

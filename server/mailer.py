@@ -12,7 +12,8 @@ DECISION_LABEL = {"approve_temporary": "Approved for a while", "approve_permanen
 DECISION_COLOR = {"approve_temporary": "#15803d", "approve_permanent": "#15803d", "deny": "#b91c1c"}
 
 
-def digest_email(day_label: str, requests: list[dict], new_sites: list[dict], link_for) -> tuple[str, str]:
+def digest_email(day_label: str, requests: list[dict], new_sites: list[dict], link_for,
+                 search_counts: dict | None = None, distraction_searches: list[dict] | None = None) -> tuple[str, str]:
     """`link_for(host)` gives the page where the parent can overrule a site's label."""
     e = html.escape
     approved = sum(1 for r in requests if r["decision"] != "deny")
@@ -44,6 +45,21 @@ def digest_email(day_label: str, requests: list[dict], new_sites: list[dict], li
 <td style="padding:5px 8px;vertical-align:top;color:{"#15803d" if good else "#b45309"}">{"Productive" if good else "Distraction"}</td>
 <td style="padding:5px 0;vertical-align:top;color:#444">{e(s.get("reason", ""))} <a href="{e(link_for(s["_id"]))}" style="color:#1d4ed8">Change</a></td></tr>''')
         parts.append("</table>")
+    counts = search_counts or {}
+    if sum(counts.values()):
+        parts.append(f'''<h3 style="margin:18px 0 6px">Web searches</h3>
+<p style="margin:0 0 8px"><b>{counts.get("work", 0)}</b> for work · <b style="color:#b45309">{counts.get("distraction", 0)}</b> distraction ·
+<b>{counts.get("personal", 0)}</b> private</p>
+<p style="color:#666;font-size:13px;margin:0 0 8px">Only distraction searches are listed. Schoolwork searches are counted, and private topics
+(health, feelings, relationships and the like) are counted without their words, so your child can still look for help.</p>''')
+        if distraction_searches:
+            parts.append('<table style="border-collapse:collapse;width:100%">')
+            for x in distraction_searches[:60]:
+                during = f" (during: {e(x['task'])})" if x.get("task") else ""
+                parts.append(f'''<tr><td style="padding:5px 10px 5px 0;vertical-align:top;color:#666;white-space:nowrap">{e(x.get("localTime", ""))}</td>
+<td style="padding:5px 0;vertical-align:top"><b>{e(x.get("text", ""))}</b><span style="color:#666">{during}</span><br>
+<span style="color:#444">{e(x.get("reason", ""))}</span></td></tr>''')
+            parts.append("</table>")
     parts.append("</div>")
     return subject, "".join(parts)
 

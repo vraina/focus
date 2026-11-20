@@ -68,6 +68,21 @@ final class CoreTests: XCTestCase {
         XCTAssertFalse(SiteRequest.isValidHost("../etc") || SiteRequest.isValidHost("localhost"))
     }
 
+    func testSearchWordsFromTabAddress() {
+        func q(_ address: String) -> String? { SearchQuery.parse(address)?.query }
+        XCTAssertEqual(q("https://www.google.com/search?q=quadratic+formula%20examples&sca_esv=1&hl=en"), "quadratic formula examples")
+        XCTAssertEqual(SearchQuery.parse("https://www.google.co.in/search?q=nba+scores")?.engine, "google.com")
+        XCTAssertEqual(q("https://www.bing.com/search?q=photosynthesis"), "photosynthesis")
+        XCTAssertEqual(q("https://duckduckgo.com/?q=french+revolution+causes&ia=web"), "french revolution causes")
+        XCTAssertEqual(q("https://search.yahoo.com/search?p=cell+division"), "cell division")
+        // Not searches: other Google pages, an empty box, and sites that merely have a q parameter.
+        XCTAssertNil(q("https://www.google.com/maps?q=coffee"))
+        XCTAssertNil(q("https://docs.google.com/document/d/1?q=x"))
+        XCTAssertNil(q("https://www.google.com/search?q=+"))
+        XCTAssertNil(q("https://example.com/search?q=hello"))
+        XCTAssertNil(q("https://notgoogle.com/search?q=hello"))
+    }
+
     func testContextKey() {
         let a = ctx("c", "Chrome", url: "https://www.instagram.com/a", browser: true)
         let b = ctx("c", "Chrome", url: "https://instagram.com/b", browser: true)

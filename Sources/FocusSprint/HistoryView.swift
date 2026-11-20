@@ -25,6 +25,7 @@ struct HistoryView: View {
     @State private var source: HistorySource = .local
     @State private var records: [SprintRecord] = []
     @State private var sites = SiteBook()
+    @State private var searches: [SearchEntry] = []
     @State private var selection: String?
     @State private var message: String?
     @State private var syncing = false
@@ -54,7 +55,7 @@ struct HistoryView: View {
 
             Group {
                 if let record = records.first(where: { $0.id == selection }) {
-                    SprintDetail(record: record, source: source, sites: sites)
+                    SprintDetail(record: record, source: source, sites: sites, searches: searches)
                 } else {
                     VStack(spacing: 10) {
                         Image(systemName: "chart.bar.xaxis").font(.system(size: 38)).foregroundStyle(.tertiary)
@@ -106,6 +107,8 @@ struct HistoryView: View {
     private func show(_ list: [SprintRecord]) {
         sites = SiteBook(file: source == .local ? Paths.sites
                                                 : CloudCache.sprints.deletingLastPathComponent().appendingPathComponent("sites.json"))
+        searches = SearchLog.load(from: source == .local ? Paths.searches
+            : CloudCache.sprints.deletingLastPathComponent().appendingPathComponent("searches.json"))
         records = list
         if selection == nil || !list.contains(where: { $0.id == selection }) { selection = list.first?.id }
     }
@@ -151,6 +154,14 @@ struct SprintDetail: View {
     var record: SprintRecord
     var source: HistorySource
     var sites = SiteBook()
+    var searches: [SearchEntry] = []
+
+    /// Searches made during this sprint, or on this day for the all-day record.
+    private var ownSearches: [SearchEntry] {
+        let from = record.isAmbient ? Calendar.current.startOfDay(for: record.start.startedAt) : record.start.startedAt
+        let to = record.isAmbient ? from.addingTimeInterval(86400) : record.start.startedAt.addingTimeInterval(record.elapsedSeconds)
+        return searches.filter { entry in entry.date.map { $0 >= from && $0 <= to } ?? false }
+    }
 
     /// Visits to sites that have since been approved (by the reviewer or a parent) or relabelled productive.
     private var approvedSince: [DistractionEvent] {
@@ -215,6 +226,8 @@ struct SprintDetail: View {
                     .card()
                 }
 
+                if !ownSearches.isEmpty { SearchCard(entries: ownSearches) }
+
                 if record.events.isEmpty {
                     HStack(spacing: 10) {
                         Image(systemName: "checkmark.seal.fill").font(.system(size: 20)).foregroundStyle(Theme.good)
@@ -243,6 +256,47 @@ struct SprintDetail: View {
         }
         let base = "\(record.start.startedAt.formatted(date: .complete, time: .shortened)) · \(record.start.plannedSeconds / 60) min planned · \(record.start.user) on \(record.start.device)"
         return record.interrupted ? base + " · the app was quit mid-sprint" : base
+    }
+}
+
+/// Web searches: how many of each kind, and the words of the distraction ones only.
+struct SearchCard: View {
+    var entries: [SearchEntry]
+
+    var body: some View {
+        let counts = SearchLog.counts(entries)
+        let offTopic = entries.filter { $0.label == "distraction" }
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                SectionLabel(text: "Web searches")
+                Spacer()
+                Pill(text: "\(counts.work) work", tint: Theme.good)
+                Pill(text: "\(counts.distraction) distraction", tint: counts.distraction > 0 ? Theme.bad : .secondary)
+                if counts.personal > 0 { Pill(text: "\(counts.personal) private", tint: .secondary, icon: "lock.fill") }
+            }
+            ForEach(offTopic) { entry in
+                HStack(alignment: .top, spacing: 10) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.bad)
+                        .frame(width: 26, height: 26)
+                        .background(Theme.bad.opacity(0.13), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(entry.text ?? "").font(.system(size: 14, weight: .semibold))
+                        if let reason = entry.reason, !reason.isEmpty {
+                            Text(reason).font(.system(size: 12)).foregroundStyle(.secondary)
+                        }
+                    }
+                    Spacer(minLength: 8)
+                    if let date = entry.date {
+                        Text(date.formatted(date: .omitted, time: .shortened)).font(Theme.number(12)).foregroundStyle(.secondary)
+                    }
+                }
+            }
+            Text(offTopic.isEmpty ? "No distraction searches. Work searches are only counted, and private topics are never recorded."
+                                  : "Only distraction searches are listed. Work searches are counted, and private topics are never recorded.")
+                .font(.system(size: 12)).foregroundStyle(.secondary)
+        }
+        .card()
     }
 }
 
