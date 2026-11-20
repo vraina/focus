@@ -32,6 +32,7 @@ import accounts
 import classifier
 import dashboard
 import mailer
+import releases
 
 # Local development: values come from server/.env (never committed). On Render they are real environment variables.
 load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
@@ -134,7 +135,7 @@ class Service:
 
 
 def create_app(db=None, classify=classifier.classify, review=classifier.review_request, send_email=mailer.send,
-               start_scheduler=False, label_search=classifier.classify_search) -> Flask:
+               start_scheduler=False, label_search=classifier.classify_search, latest_release=releases.latest) -> Flask:
     app = Flask(__name__)
     secret = os.environ.get("SECRET_KEY", "")
     if not secret:
@@ -144,6 +145,7 @@ def create_app(db=None, classify=classifier.classify, review=classifier.review_r
     if db is None:
         db = MongoClient(os.environ["MONGODB_URI"])[os.environ.get("MONGODB_DB", "focussprint")]
     svc = Service(db, classify, review, label_search, send_email)
+    svc.latest_release = latest_release
     families, devices, sites, labels = db["families"], db["devices"], db["sites"], db["labels"]
     members = db["members"]
     requests_log, searches, digests = db["requests"], db["searches"], db["digests"]
@@ -185,8 +187,10 @@ def create_app(db=None, classify=classifier.classify, review=classifier.review_r
         member = members.find_one({"_id": entry.get("memberId"), "familyId": family["_id"]}) if entry.get("memberId") else None
         g.fid, g.device, g.family, g.login, g.login_key, g.member = family["_id"], device, family, login, key, member
         g.label = f"{device.get('name') or 'Mac'} · {login}"
-        if device.get("lastSeenAt", "") < iso(datetime.now(timezone.utc) - timedelta(minutes=1)):
-            devices.update_one({"_id": device["_id"]}, {"$set": {"lastSeenAt": now()}})
+        version = request.headers.get("X-App-Version", "")
+        version = version if re.fullmatch(r"\d+(\.\d+){0,3}", version) else ""
+        if device.get("lastSeenAt", "") < iso(datetime.now(timezone.utc) - timedelta(minutes=1)) or (version and version != device.get("appVersion")):
+            devices.update_one({"_id": device["_id"]}, {"$set": {"lastSeenAt": now(), **({"appVersion": version} if version else {})}})
         if member is None:
             if need_member:
                 # Nothing from this login is accepted until someone says whose it is. The Mac keeps it queued.
@@ -202,6 +206,11 @@ def create_app(db=None, classify=classifier.classify, review=classifier.review_r
     @app.get("/healthz")
     def healthz():
         return "ok"
+
+    @app.get("/api/version")
+    def api_version():
+        """The newest published installer. Public: it says nothing about anyone, and a Mac checks the file itself."""
+        return jsonify(latest_release() or {"version": "", "url": ""})
 
     def assign(device: dict, key: str, login: str, member_id: str | None, by: str):
         devices.update_one({"_id": device["_id"]}, {"$set": {f"logins.{key}": {

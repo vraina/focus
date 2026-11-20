@@ -23,6 +23,7 @@ from itsdangerous import BadSignature, SignatureExpired
 from werkzeug.security import check_password_hash, generate_password_hash
 
 import mailer
+import releases
 
 log = logging.getLogger(__name__)
 
@@ -410,6 +411,7 @@ def register(app, svc):
             moment = datetime.strptime(moment_text[:19], "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc).astimezone(zone)
             return moment.strftime("%-d %b, %-I:%M %p")
 
+        release = svc.latest_release() or {}
         rows = []
         for d in devices.find({"familyId": fid, "revoked": {"$ne": True}}).sort("pairedAt", -1):
             logins = []
@@ -422,13 +424,14 @@ def register(app, svc):
             # An adult member only sees a computer they use; admins see every computer in the household.
             if admin_view or any(l["member"] == mine for l in logins):
                 rows.append({"id": d["_id"], "name": d.get("name", "Mac"), "logins": logins if admin_view else [l for l in logins if l["member"] == mine],
-                             "paired": when(d.get("pairedAt", "")), "seen": when(d.get("lastSeenAt", "")), "quiet": d.get("lastSeenAt", "") < stale})
+                             "paired": when(d.get("pairedAt", "")), "seen": when(d.get("lastSeenAt", "")), "quiet": d.get("lastSeenAt", "") < stale,
+                             "version": d.get("appVersion", ""), "behind": releases.newer(release.get("version", ""), d.get("appVersion", "")) and bool(d.get("appVersion"))})
         code = db["pairings"].find_one({"createdBy": request.account["_id"], "used": False, "expiresAt": {"$gt": utcnow()}},
                                        sort=[("expiresAt", -1)])
         return render_template("computers.html", computers=rows, minutes=PAIRING_MINUTES, choices=choices, admin_view=admin_view,
                                code=f"{code['_id'][:4]}-{code['_id'][4:]}" if code else None,
                                code_for=next((c["label"] for c in choices if code and c["id"] == code["memberId"]), ""),
-                               download_url=os.environ.get("DOWNLOAD_URL", ""))
+                               download_url=os.environ.get("DOWNLOAD_URL", "") or release.get("url", ""), latest=release.get("version", ""))
 
     @app.post("/dashboard/computers/code")
     @signed_in

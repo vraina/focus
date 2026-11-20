@@ -124,6 +124,51 @@ final class CoreTests: XCTestCase {
         XCTAssertFalse(day.interrupted)
     }
 
+    func testVersionsCompareAsNumbers() {
+        XCTAssertTrue(AppVersion.isNewer("0.10.0", than: "0.9.2"))
+        XCTAssertTrue(AppVersion.isNewer("v1.0", than: "0.9.9"))
+        XCTAssertTrue(AppVersion.isNewer("0.3.1", than: "0.3"))
+        XCTAssertFalse(AppVersion.isNewer("0.3.0", than: "0.3"))
+        XCTAssertFalse(AppVersion.isNewer("0.2.9", than: "0.3.0"))
+        XCTAssertFalse(AppVersion.isNewer("", than: "0.3.0"))
+        XCTAssertFalse(AppVersion.isNewer("latest", than: ""))
+    }
+
+    func testAnUpdateMustBeNotarisedOursAndNewer() throws {
+        let good = """
+        /tmp/YoungWonksFocus.pkg: accepted
+        source=Notarized Developer ID
+        origin=Developer ID Installer: Example Person (ABCDE12345)
+        """
+        let distribution = #"<installer-gui-script><pkg-ref id="com.focussprint.pkg" version="0.4.0" onConclusion="none">core.pkg</pkg-ref></installer-gui-script>"#
+        XCTAssertEqual(try Updater.approve(spctl: good, distribution: distribution, ownTeam: "ABCDE12345", ownVersion: "0.3.0"), "0.4.0")
+        // Signed and notarised, but by a different developer.
+        XCTAssertThrowsError(try Updater.approve(spctl: good, distribution: distribution, ownTeam: "ZZZZZ99999", ownVersion: "0.3.0")) {
+            XCTAssertEqual($0 as? Updater.Failure, .wrongTeam("ABCDE12345"))
+        }
+        // An older, genuine installer is not a way to go backwards.
+        XCTAssertThrowsError(try Updater.approve(spctl: good, distribution: distribution, ownTeam: "ABCDE12345", ownVersion: "0.4.0")) {
+            XCTAssertEqual($0 as? Updater.Failure, .notNewer("0.4.0"))
+        }
+        // Signed but not notarised, rejected outright, or unsigned.
+        for bad in ["/tmp/x.pkg: accepted\nsource=Developer ID\norigin=Developer ID Installer: Example Person (ABCDE12345)",
+                    "/tmp/x.pkg: rejected\nsource=Notarized Developer ID\norigin=Developer ID Installer: Example Person (ABCDE12345)",
+                    "/tmp/x.pkg: rejected\nsource=no usable signature", ""] {
+            XCTAssertThrowsError(try Updater.approve(spctl: bad, distribution: distribution, ownTeam: "ABCDE12345", ownVersion: "0.3.0")) {
+                XCTAssertEqual($0 as? Updater.Failure, .notNotarised)
+            }
+        }
+        // The helper's own team: only a Developer ID build has one.
+        XCTAssertEqual(Updater.team(fromCodesign: "Authority=Developer ID Application: Example Person (ABCDE12345)\nTeamIdentifier=ABCDE12345"), "ABCDE12345")
+        XCTAssertNil(Updater.team(fromCodesign: "Authority=Apple Development: someone (XYZ)\nTeamIdentifier=ABCDE12345"))
+        XCTAssertNil(Updater.team(fromCodesign: "Signature=adhoc\nTeamIdentifier=not set"))
+        // Only GitHub over https.
+        XCTAssertNotNil(Updater.allowed("https://github.com/vraina/focus/releases/download/v0.4.0/YoungWonksFocus.pkg"))
+        XCTAssertNil(Updater.allowed("http://github.com/vraina/focus/releases/download/v0.4.0/YoungWonksFocus.pkg"))
+        XCTAssertNil(Updater.allowed("https://github.com.evil.example/a.pkg"))
+        XCTAssertNil(Updater.allowed("https://example.com/YoungWonksFocus.pkg"))
+    }
+
     func testContextKey() {
         let a = ctx("c", "Chrome", url: "https://www.instagram.com/a", browser: true)
         let b = ctx("c", "Chrome", url: "https://instagram.com/b", browser: true)

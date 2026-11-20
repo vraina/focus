@@ -324,6 +324,7 @@ public final class SiteSync {
         request.timeoutInterval = 120
         request.setValue("Bearer \(config.deviceToken)", forHTTPHeaderField: "Authorization")
         request.setValue(Paths.loginName(Paths.uid), forHTTPHeaderField: "X-Login")
+        request.setValue(AppVersion.installed, forHTTPHeaderField: "X-App-Version")
         request.setValue(item.file.hasSuffix(".json") ? "application/json" : "application/octet-stream", forHTTPHeaderField: "Content-Type")
         let (_, response) = try await session.upload(for: request, from: payload)
         switch (response as? HTTPURLResponse)?.statusCode ?? 0 {
@@ -449,6 +450,7 @@ public final class SiteSync {
             request.setValue("Bearer \(config.deviceToken)", forHTTPHeaderField: "Authorization")
             // Which Mac login this is about. The helper takes it from the system, not from the app.
             request.setValue(Paths.loginName(Paths.uid), forHTTPHeaderField: "X-Login")
+            request.setValue(AppVersion.installed, forHTTPHeaderField: "X-App-Version")
         }
         if let json {
             request.httpMethod = "POST"

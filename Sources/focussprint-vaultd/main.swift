@@ -42,7 +42,34 @@ if getuid() != 0, fm.fileExists(atPath: oldVault.path) {
     try? fm.removeItem(at: oldVault)
     log("folded the earlier shared vault into this login's area")
 }
-log("helper started, root=\(Paths.root.path) uid=\(getuid()) service=\(ServiceConfig.baseURL)")
+log("helper started, version=\(AppVersion.installed) root=\(Paths.root.path) uid=\(getuid()) service=\(ServiceConfig.baseURL)")
+
+// Keeps this Mac on the current version: a few minutes after starting, then every six hours.
+// Only the installed, Developer ID signed helper does this; see Updater for what a package must pass.
+if getuid() == 0 {
+    Task {
+        let updater = Updater()
+        var refused = "" // a version that failed its checks is not downloaded again and again
+        try? await Task.sleep(nanoseconds: 180 * 1_000_000_000)
+        while true {
+            do {
+                if let release = try await updater.available(), release.version != refused {
+                    log("version \(release.version) is available (this is \(AppVersion.installed)); downloading")
+                    do {
+                        let installed = try await updater.install(release)
+                        log("installed version \(installed)") // the installer restarts the helper right after
+                    } catch {
+                        refused = release.version
+                        log("update to \(release.version) not installed: \(error.localizedDescription)")
+                    }
+                }
+            } catch {
+                log("could not check for updates: \(error.localizedDescription)")
+            }
+            try? await Task.sleep(nanoseconds: 6 * 3600 * 1_000_000_000)
+        }
+    }
+}
 
 /// What the helper remembers about one Mac login between passes.
 struct LoginState {

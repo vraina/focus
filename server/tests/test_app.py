@@ -52,7 +52,8 @@ class World:
             self.emails.append({"to": to, "subject": subject, "body": body})
             return True
 
-        return create_app(db=self.db, classify=classify, review=review, send_email=send, label_search=label_search)
+        return create_app(db=self.db, classify=classify, review=review, send_email=send, label_search=label_search,
+                          latest_release=lambda: {"version": "0.4.0", "url": "https://example.com/YoungWonksFocus.pkg"})
 
     def browser(self):
         return self.app.test_client()
@@ -638,3 +639,22 @@ def test_earlier_data_becomes_the_owners_own(w):
     assert "Old sprint" in w.sign_in()[0].get("/dashboard/day/2026-01-01").get_data(as_text=True)
     w.build()  # and again: nothing is duplicated
     assert w.db["accounts"].count_documents({"email": OWNER}) == 1 and w.db["sites"].count_documents({}) == 2
+
+
+def test_versions_and_the_installer_link(w):
+    admin = w.household("mum@example.com")
+    kid = w.add_kid(admin, "Mia")
+    mac = w.pair(admin, kid, name="Mia's Mac")
+    anyone = w.browser()
+    assert anyone.get("/api/version").json == {"version": "0.4.0", "url": "https://example.com/YoungWonksFocus.pkg"}
+    page = admin.get("/dashboard/computers").get_data(as_text=True)
+    assert 'href="https://example.com/YoungWonksFocus.pkg"' in page and "pending" not in page  # version not known yet
+    # The helper says which version it runs; an older one is shown as waiting for its update.
+    assert anyone.get("/api/config", headers={**mac, "X-App-Version": "0.3.9"}).status_code == 200
+    page = admin.get("/dashboard/computers").get_data(as_text=True)
+    assert "version 0.3.9" in page and "Update to 0.4.0 pending" in page
+    assert anyone.get("/api/config", headers={**mac, "X-App-Version": "0.10.0"}).status_code == 200  # 0.10 is newer than 0.4
+    page = admin.get("/dashboard/computers").get_data(as_text=True)
+    assert "version 0.10.0" in page and "pending" not in page
+    anyone.get("/api/config", headers={**mac, "X-App-Version": "<b>1</b>"})  # nonsense is ignored
+    assert w.db["devices"].find_one({"name": "Mia's Mac"})["appVersion"] == "0.10.0"

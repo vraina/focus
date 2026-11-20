@@ -58,10 +58,47 @@ that login only. Unlinking the computer needs the Mac administrator password; re
 
 ### The installer package
 
-`scripts/package.sh` builds `build/YoungWonksFocus.pkg`. Unsigned, it is fine for your own Macs. For other people to
-download and open it without warnings, it must be signed with Apple Developer ID certificates and notarised; the
-script does both when `DEVELOPER_ID_APP`, `DEVELOPER_ID_INSTALLER` and `NOTARY_PROFILE` are set. Put the finished
-file somewhere downloadable and set `DOWNLOAD_URL` so the Computers page links to it.
+`scripts/package.sh` builds `build/YoungWonksFocus.pkg`, a normal Mac installer: a welcome screen, the administrator
+password, and a last screen with the two steps left (allow screen recording, link the computer). It installs the app
+for every login on the Mac, the background helper, and the two launch entries that start them. Running a newer
+installer over an older one keeps the computer's link and everything recorded.
+
+Unsigned, the package is only good for your own Macs. For anyone else, and for automatic updates, it has to be signed
+with your Apple Developer ID and notarised by Apple.
+
+### Releasing (service owner)
+
+One-time setup, on the Mac you build on, with your paid Apple Developer account:
+
+1. Xcode > Settings > Accounts > your Apple ID > Manage Certificates > **+** : create **Developer ID Application**
+   and **Developer ID Installer**. `security find-identity -v` then lists both, with your team ID in brackets.
+2. At appleid.apple.com create an app-specific password, then save it in the keychain under a name of your choice:
+   `xcrun notarytool store-credentials youngwonks-notary --apple-id <your Apple ID> --team-id <TEAMID>`
+   (it asks for the app-specific password; nothing is stored in this repository).
+
+For every release: raise the number in `VERSION`, commit, then
+
+```bash
+DEVELOPER_ID_APP="Developer ID Application: Your Name (TEAMID)" \
+DEVELOPER_ID_INSTALLER="Developer ID Installer: Your Name (TEAMID)" \
+NOTARY_PROFILE=youngwonks-notary scripts/release.sh
+```
+
+That builds, signs, notarises and staples the installer, refuses to go on unless macOS accepts it, and attaches it
+to a GitHub release `v<version>`. The Computers page links to the newest release by itself.
+
+### Automatic updates
+
+Every installed Mac asks the service (`/api/version`) for the current version a few minutes after starting and every
+six hours. When there is a newer one the helper downloads the installer and installs it silently; the app restarts
+by itself. The helper does not trust the service or the download. It installs a package only if
+
+- macOS says the package is notarised by Apple,
+- it is signed by the same Developer ID team as the helper already running, and
+- the version inside it is newer than the installed one (an old genuine installer cannot roll a Mac back).
+
+A development build, or one signed any other way, never updates itself. The Computers page shows each computer's
+version and whether an update is still pending. A sprint that is running when an update lands is cut short.
 
 ## Website labels and "Needed for work"
 

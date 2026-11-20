@@ -3,6 +3,8 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 CONFIG="${1:-release}"
+VERSION="${VERSION:-$(cat VERSION)}"
+BUILD_NUMBER="$(git rev-list --count HEAD 2>/dev/null || echo 1)"
 swift build -c "$CONFIG"
 BIN="$(swift build -c "$CONFIG" --show-bin-path)"
 APP="build/YoungWonks Focus.app"
@@ -32,8 +34,8 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
     <key>CFBundleExecutable</key><string>FocusSprint</string>
     <key>CFBundleIconFile</key><string>AppIcon</string>
     <key>CFBundlePackageType</key><string>APPL</string>
-    <key>CFBundleShortVersionString</key><string>0.1.0</string>
-    <key>CFBundleVersion</key><string>1</string>
+    <key>CFBundleShortVersionString</key><string>__VERSION__</string>
+    <key>CFBundleVersion</key><string>__BUILD__</string>
     <key>LSMinimumSystemVersion</key><string>14.0</string>
     <key>NSHighResolutionCapable</key><true/>
     <key>NSPrincipalClass</key><string>NSApplication</string>
@@ -42,6 +44,7 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 </dict>
 </plist>
 PLIST
+sed -i '' "s/__VERSION__/$VERSION/; s/__BUILD__/$BUILD_NUMBER/" "$APP/Contents/Info.plist"
 # A real signing identity keeps the Screen Recording permission across rebuilds; ad-hoc signing resets it.
 IDENTITY="${SIGN_ID:-$(security find-identity -v -p codesigning 2>/dev/null | awk 'NR==1 && $2 ~ /^[0-9A-F]{40}$/ {print $2}')}"
 if [ -n "${DEVELOPER_ID_APP:-}" ]; then
@@ -53,4 +56,4 @@ else
     codesign --force --sign "${IDENTITY:--}" --identifier com.focussprint.vaultd build/focussprint-vaultd
     codesign --force --sign "${IDENTITY:--}" "$APP"
 fi
-echo "Built $APP ($CONFIG, signed with ${IDENTITY:-ad-hoc})"
+echo "Built $APP $VERSION ($CONFIG, signed with ${IDENTITY:-ad-hoc})"

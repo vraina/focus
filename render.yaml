@@ -26,7 +26,7 @@ services:
         sync: false
       - key: PARENT_PASSWORD     # the owner's first password (change it later under Settings on the website)
         sync: false
-      - key: DOWNLOAD_URL        # where parents download the Mac installer; shown on the Computers page
+      - key: DOWNLOAD_URL        # optional: overrides the installer link (by default the newest GitHub release)
         sync: false
       - key: FAMILY_DAILY_AI_CALLS  # each family's daily allowance of Claude calls
         value: "600"

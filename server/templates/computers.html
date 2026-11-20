@@ -9,7 +9,7 @@
 <div class="card">
   <ol style="margin:0 0 14px;padding-left:20px">
     <li>On the Mac, signed in as an administrator, install YoungWonks Focus.
-      {% if download_url %}<a href="{{ download_url }}">Download the installer</a>.{% else %}<span class="muted">(The installer download is not published yet.)</span>{% endif %}</li>
+      {% if download_url %}<a href="{{ download_url }}">Download the installer</a>{% if latest %} <span class="muted">(version {{ latest }})</span>{% endif %}.{% else %}<span class="muted">(The installer download is not published yet.)</span>{% endif %}</li>
     <li>Open the app in any login (yours is fine) and choose <b>Account</b>.</li>
     <li>Type in the code below. It works once, for {{ minutes }} minutes. That login becomes the chosen person's; assign the Mac's other logins further down this page.</li>
   </ol>
@@ -33,7 +33,8 @@
   <div class="card">
     <div class="row">
       <div style="flex:1;min-width:200px"><div style="font-weight:700">{{ c.name }}</div>
-        <div class="muted small">Linked {{ c.paired }} · last heard from {{ c.seen }}</div></div>
+        <div class="muted small">Linked {{ c.paired }} · last heard from {{ c.seen }}{% if c.version %} · version {{ c.version }}{% endif %}</div></div>
+      {% if c.behind %}<span class="pill warn" title="It updates by itself within a few hours of being switched on.">Update to {{ latest }} pending</span>{% endif %}
       {% if c.quiet %}<span class="pill warn">Quiet for over a day</span>{% else %}<span class="pill good">Active</span>{% endif %}
       {% if admin_view %}
       <form method="post" action="{{ url_for('remove_computer', device_id=c.id) }}"
@@ -66,5 +67,6 @@
   <div class="card muted">No computers linked yet.</div>
 {% endfor %}
 </div>
-<p class="muted small" style="margin-top:14px">Each Mac login on a computer belongs to one person. A new login shows up here the first time it is used; choose whose it is, or let a kid pick their own profile in the app. An adult assigns their own login with a code, and what they record stays private.</p>
+<p class="muted small" style="margin-top:14px">Computers keep themselves up to date: a new version installs by itself, usually within a few hours.</p>
+<p class="muted small">Each Mac login on a computer belongs to one person. A new login shows up here the first time it is used; choose whose it is, or let a kid pick their own profile in the app. An adult assigns their own login with a code, and what they record stays private.</p>
 {% endblock %}
