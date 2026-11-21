@@ -733,6 +733,10 @@ def test_apps_are_labelled_once_and_a_person_can_overrule(w):
     admin.post("/dashboard/apps", data={"csrf": w.csrf(admin, "/dashboard/apps"), "list": "kids", "bundle": "com.apple.Preview", "state": "work"})
     assert {a["bundleId"]: a["state"] for a in c.get("/api/apps", headers=mac).json["apps"]}["com.apple.Preview"] == "work"
     assert "Set by a person" in admin.get("/dashboard/apps").get_data(as_text=True)
+    # The three-way switch is three radio buttons in the same form: same "state" field, and a Save button without JavaScript.
+    page = admin.get("/dashboard/apps").get_data(as_text=True)
+    assert page.count('type="radio" name="state" value="distraction"') == page.count('name="bundle"') >= 4
+    assert 'type="radio" name="state" value="work" checked' in page and "<noscript><button" in page and "<select " not in page
     admin.post("/dashboard/apps", data={"csrf": w.csrf(admin, "/dashboard/apps"), "list": "kids", "bundle": "com.apple.Preview", "state": "nonsense"})
     assert w.db["apps"].find_one({"bundleId": "com.apple.Preview"})["state"] == "work"
     # Another household gets the shared label without a second AI call, and cannot see or change this household's list.

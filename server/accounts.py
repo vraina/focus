@@ -517,7 +517,7 @@ def register(app, svc):
 
     # --- Apps: how each app counts, per person ----------------------------------------------------
 
-    APP_STATES = {"distraction": "Distraction", "work": "Work app", "neutral": "Other app"}
+    APP_STATES = {"distraction": "Distraction", "work": "Work", "neutral": "Other"}
 
     def app_lists(account: dict, family: dict) -> list[dict]:
         """The kids of a household share one list, which admins manage. Every adult has their own, private one."""
@@ -544,11 +544,11 @@ def register(app, svc):
                 for d in db["apps"].find({"scope": picked["scope"]}).sort("name", 1).limit(3000)]
         rows.sort(key=lambda r: r["name"].lower())
         groups = [
-            {"key": "distraction", "title": "Distractions", "pill": "bad", "empty": "No apps are marked as a distraction yet.",
+            {"key": "distraction", "short": "time here counts as away", "title": "Distractions", "pill": "bad", "empty": "No apps are marked as a distraction yet.",
              "detail": "Time in these apps counts as distraction, all day and during a sprint."},
-            {"key": "work", "title": "Work apps", "pill": "good", "empty": "No apps are marked as work yet.",
+            {"key": "work", "short": "never a distraction · ticked for sprints", "title": "Work apps", "pill": "good", "empty": "No apps are marked as work yet.",
              "detail": "Never a distraction. These are ticked automatically when a sprint is set up."},
-            {"key": "neutral", "title": "Other apps", "pill": "brand", "empty": "No other apps yet.",
+            {"key": "neutral", "short": "never a distraction · not ticked for sprints", "title": "Other apps", "pill": "brand", "empty": "No other apps yet.",
              "detail": "Never a distraction. Utilities and everyday tools that are neither work nor play. They are not ticked for a sprint, "
                        "so switching to one during a sprint shows as a switch away unless it is ticked for that sprint."}]
         for group in groups:
