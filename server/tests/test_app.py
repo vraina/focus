@@ -1141,6 +1141,74 @@ def test_the_wizard_walks_through_kids_install_and_link(w):
     assert post("kids", action="remove", member=kids["Mia"]).status_code == 400 and w.db["members"].find_one({"_id": kids["Mia"]})
 
 
+def test_the_wizard_can_link_the_parents_own_mac_login(w):
+    admin = w.household("dad@example.com")
+    kid, me = w.add_kid(admin, "Mia"), w.me("dad@example.com")
+    page = admin.get("/setup/link").get_data(as_text=True)
+    # Both are offered. The kid is picked to begin with, and the page says what choosing wrongly would do.
+    assert f"member={kid}" in page and f"member={me}" in page and ">Me</a>" in page
+    assert "Code for Mia" in page and "recorded as Mia" in page
+    mine = admin.get(f"/setup/link?member={me}").get_data(as_text=True)
+    assert "Code for your own login" in mine and "only you see them" in mine
+    code = re.search(r'id="thecode">([A-Z0-9-]+)<', mine).group(1)
+    assert w.db["pairings"].find_one({"_id": code.replace("-", "")})["memberId"] == me
+    # Emailing it says whose login it is for, without naming a kid.
+    admin.post(f"/setup/link?member={me}", data={"csrf": w.csrf(admin, f"/setup/link?member={me}"), "action": "emailcode", "member": me})
+    mail = [e for e in w.emails if "code for" in e["subject"].lower()][-1]
+    assert "your own Mac login" in mail["subject"] and code in mail["body"] and "Mia" not in mail["body"]
+    # Typed on the Mac, the code makes that login the parent's: an adult, whose records stay private.
+    reply = w.browser().post("/api/pair", json={"code": code, "name": "Dad's Mac", "login": "dad"})
+    assert reply.status_code == 200
+    device = w.db["devices"].find_one({"name": "Dad's Mac"})
+    assert next(iter(device["logins"].values()))["memberId"] == me
+    # Another household's person cannot be chosen.
+    other = w.household("mum@example.com")
+    w.add_kid(other, "Leo")
+    theirs = other.get(f"/setup/link?member={me}").get_data(as_text=True)
+    assert f"member={me}" not in theirs and "Code for Leo" in theirs
+
+
+def test_a_new_household_lands_in_setup_and_a_joining_adult_on_computers(w):
+    client = w.browser()
+    made = client.post("/signup", data={"csrf": w.csrf(client, "/signup"), "invite": w.invite(), "name": "Pat",
+                                        "email": "founder@example.com", "password": "family-password-1"})
+    assert made.status_code == 302 and made.headers["Location"].endswith("/setup")
+    assert "Welcome" in client.get("/setup", follow_redirects=True).get_data(as_text=True)
+    joiner = w.browser()
+    joined = joiner.post("/signup", data={"csrf": w.csrf(joiner, "/signup"), "invite": w.invite_adult(client, "Sam"), "name": "Sam",
+                                          "email": "sam@example.com", "password": "family-password-1"})
+    assert joined.status_code == 302 and joined.headers["Location"].endswith("/dashboard/computers")
+
+
+def test_a_page_never_waits_on_the_release_lookup(monkeypatch):
+    import threading, time
+    import releases
+    gate, calls = threading.Event(), []
+
+    def slow(repo):
+        calls.append(repo)
+        gate.wait(5)
+        return {"version": "9.9.9", "url": "https://example.com/new.pkg"}
+
+    monkeypatch.setattr(releases, "fetch", slow)
+    monkeypatch.setattr(releases, "_cache", {"at": 0.0, "value": {"version": "1.0.0", "url": "https://example.com/old.pkg"}, "busy": False})
+    began = time.time()
+    assert releases.latest()["version"] == "1.0.0" and time.time() - began < 0.5  # what is known, at once
+    assert releases.latest()["version"] == "1.0.0" and len(calls) == 1          # one lookup at a time
+    gate.set()
+    for _ in range(50):
+        if releases.latest()["version"] == "9.9.9":
+            break
+        time.sleep(0.05)
+    assert releases.latest()["version"] == "9.9.9"
+    # Nothing known yet (just restarted): wait a little for the lookup, but never for long.
+    gate.clear()
+    monkeypatch.setattr(releases, "_cache", {"at": 0.0, "value": {}, "busy": False})
+    began = time.time()
+    assert releases.latest(wait=0.2) == {} and time.time() - began < 1
+    gate.set()
+
+
 def test_the_code_used_endpoint_only_answers_its_maker(w):
     admin = w.household("mum@example.com")
     kid = w.add_kid(admin, "Mia")

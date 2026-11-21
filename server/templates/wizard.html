@@ -239,12 +239,13 @@ main{max-width:1200px;padding:0 32px 48px;font-size:16px}
       <h1>Link the Mac</h1>
       <div class="ask"><span id="whose">Whose Mac login is the app open in?</span>
         <div class="seg" role="group" aria-labelledby="whose">
-          {% for k in kids %}<a class="{{ 'on' if k.id == picked.id }}" {{ 'aria-current=true' if k.id == picked.id }} href="{{ url_for('setup_step', step='link', member=k.id) }}">{{ k.name }}</a>{% endfor %}
+          {% for k in people %}<a class="{{ 'on' if k.id == picked.id }}" {{ 'aria-current=true' if k.id == picked.id }} href="{{ url_for('setup_step', step='link', member=k.id) }}">{{ k.name }}</a>{% endfor %}
         </div></div>
+      <p class="fine" style="margin:-6px 0 12px">The code makes that Mac login this person's. {% if picked.me %}Your own records are private: only you see them.{% else %}If the app is open in <b>your own</b> Mac login, choose <b>Me</b>, or everything you do there is recorded as {{ picked.name }}'s.{% endif %}</p>
       <div class="linkrow">
         <div class="codebox" id="codebox" data-code="{{ raw_code }}" data-expires="{{ expires }}" data-status="{{ url_for('setup_code_status') }}"
              data-done="{{ url_for('setup_step', step='done') }}">
-          <div class="k forwho" style="font-size:14px;font-weight:600;color:var(--soft)">Code for {{ picked.name }}'s login</div>
+          <div class="k forwho" style="font-size:14px;font-weight:600;color:var(--soft)">{% if picked.me %}Code for your own login{% else %}Code for {{ picked.name }}'s login{% endif %}</div>
           {% if code %}
           <div class="codeline"><div class="thecode" id="thecode">{{ code }}</div>
             <button class="fill copycode" type="button" data-copy="{{ code }}" data-copied="Copied">

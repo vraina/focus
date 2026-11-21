@@ -383,7 +383,9 @@ def register(app, svc):
                 if action == "emailcode":
                     # Sends the code that is already on the screen. It is not remade or extended: still single use,
                     # still its normal expiry. Only ever to the signed-in parent's own address.
-                    kid = members.find_one({"_id": request.form.get("member", ""), "familyId": fid, "kind": "kid"})
+                    own = request.form.get("member", "") == account["memberId"]  # the admin's own Mac login
+                    kid = members.find_one({"_id": request.form.get("member", ""), "familyId": fid,
+                                            **({} if own else {"kind": "kid"})})
                     live = kid and db["pairings"].find_one({"createdBy": account["_id"], "memberId": kid["_id"], "used": False,
                                                             "expiresAt": {"$gt": utcnow()}})
                     hour_ago = (datetime.now(timezone.utc) - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -395,7 +397,8 @@ def register(app, svc):
                     else:
                         until = datetime.strptime(live["expiresAt"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc).astimezone(svc.zone(family))
                         sent = svc.send_email(account["email"], *mailer.code_email(
-                            f"{live['_id'][:4]}-{live['_id'][4:]}", kid.get("name", "your kid"), until.strftime("%-I:%M %p").lower()))
+                            f"{live['_id'][:4]}-{live['_id'][4:]}", None if own else kid.get("name", "your kid"),
+                            until.strftime("%-I:%M %p").lower()))
                         families.update_one({"_id": fid}, {"$set": {"setup.codeEmails": recent + [utcnow()]}})
                         if sent:
                             code_sent = True
@@ -418,12 +421,16 @@ def register(app, svc):
         ctx: dict = {}
         if step == "link":
             asked = request.args.get("member") or getattr(request, "picked_member", "")
-            picked = next((k for k in kids if k["id"] == asked), None) \
+            # The Mac being linked may be the parent's own, so "Me" is offered beside the kids. A code makes the
+            # login it is typed into that person's: choosing a kid on the parent's own Mac would record the
+            # parent as the kid.
+            people = kids + [{"id": account["memberId"], "name": "Me", "me": True, "linked": False}]
+            picked = next((k for k in people if k["id"] == asked), None) \
                 or next((k for k in kids if not k["linked"]), kids[0])
             pairing = db["pairings"].find_one({"createdBy": account["_id"], "memberId": picked["id"], "used": False, "expiresAt": {"$gt": utcnow()}})
             if pairing is None and request.method == "GET" and not request.args.get("waiting"):
                 pairing = make_pairing_code(picked["id"])  # opening the step shows a code straight away
-            ctx = {"picked": picked, "minutes": PAIRING_MINUTES, "still_waiting": bool(request.args.get("waiting")), "code_sent": code_sent,
+            ctx = {"picked": picked, "people": people, "minutes": PAIRING_MINUTES, "still_waiting": bool(request.args.get("waiting")), "code_sent": code_sent,
                    "code": f"{pairing['_id'][:4]}-{pairing['_id'][4:]}" if pairing else "", "raw_code": pairing["_id"] if pairing else "",
                    "expires": pairing["expiresAt"] if pairing else ""}
         elif step == "done":
@@ -510,11 +517,16 @@ def register(app, svc):
                     note_attempt(db, "signup")
                     error = "That invitation code is not valid, or it has already been used."
                 if not error:
-                    if not send_verification(account):
-                        # Email is not working (or not set up): do not strand the person behind a link that never arrives.
-                        accounts.update_one({"_id": account["_id"]}, {"$set": {"verified": True}})
+                    # The confirmation email is sent without holding up the page. If email is not working (or
+                    # not set up), do not strand the person behind a link that never arrives.
+                    link = f"{svc.public_url}{url_for('verify')}?t={svc.timed.dumps(['verify', account['_id']])}"
+                    aid = account["_id"]
+                    svc.send_later(account["email"], *mailer.verification_email(link),
+                                   then=lambda ok: None if ok else accounts.update_one({"_id": aid}, {"$set": {"verified": True}}))
                     start_session(account)
-                    return redirect(url_for("computers"))
+                    # Someone starting a household goes straight into setup; someone joining one has only
+                    # their own computer to link.
+                    return redirect(url_for("setup") if founding else url_for("computers"))
         return render_template("signup.html", error=error, values=values), (400 if error else 200)
 
     @app.get("/verify")

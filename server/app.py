@@ -147,6 +147,13 @@ def create_app(db=None, classify=classifier.classify, review=classifier.review_r
         db = MongoClient(os.environ["MONGODB_URI"])[os.environ.get("MONGODB_DB", "focussprint")]
     svc = Service(db, classify, review, label_search, send_email)
     svc.latest_release = latest_release
+    if latest_release is releases.latest:
+        releases.latest(wait=0)  # start looking up the newest installer now, so the first page that needs it has it
+    # Email goes out on its own thread when it is the real sender, so a page is not held up by the mail service.
+    # (Tests pass their own sender and stay in step with it.)
+    svc.send_later = (lambda *mail, then=None: threading.Thread(
+        target=lambda: (then or (lambda ok: None))(send_email(*mail)), daemon=True).start()) if send_email is mailer.send \
+        else (lambda *mail, then=None: (then or (lambda ok: None))(send_email(*mail)))
     families, devices, sites, labels = db["families"], db["devices"], db["sites"], db["labels"]
     members = db["members"]
     requests_log, searches, digests = db["requests"], db["searches"], db["digests"]
