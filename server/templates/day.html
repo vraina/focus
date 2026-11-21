@@ -1,61 +1,131 @@
 {% extends "base.html" %}
 {% set active = 'days' %}
-{% block title %}{{ title }} · YoungWonks Focus{% endblock %}
+{% block title %}{{ view.title }} · {{ title }} · YoungWonks Focus{% endblock %}
 {% block head %}
 <style>
-/* Four weeks, one bar a day. The bar's height is the share of tracked time spent away. */
-.weeks{display:flex;gap:10px;margin-top:14px}
-.weeks .axis{display:flex;flex-direction:column;justify-content:space-between;height:128px;font-size:11px;color:var(--faint);font-variant-numeric:tabular-nums;text-align:right;min-width:30px}
-.weeks .plot{position:relative;flex:1;min-width:0}
-.weeks .grid{position:absolute;left:0;right:0;top:0;height:128px;display:flex;flex-direction:column;justify-content:space-between;pointer-events:none}
-.weeks .grid i{display:block;border-top:1px solid var(--line2)} .weeks .grid i:last-child{border-top-color:var(--line)}
-.weeks .bars{position:relative;display:flex;gap:2px;align-items:stretch}
-.weeks .d{position:relative;flex:1;min-width:0;display:flex;flex-direction:column;align-items:center;color:inherit;border-radius:8px;padding-bottom:4px}
-.weeks .d:hover{text-decoration:none;background:var(--sunk)} .weeks .d.sel{background:color-mix(in srgb,var(--brand) 9%,transparent)}
-.weeks .col{height:128px;width:100%;display:flex;align-items:flex-end;justify-content:center}
-.weeks .bar{width:min(62%,22px);min-height:3px;border-radius:4px 4px 0 0;background:var(--good);transition:filter .12s}
-.weeks .bar.warn{background:var(--warn)} .weeks .bar.bad{background:var(--bad)}
-.weeks .bar.none{background:var(--line);height:3px;min-height:3px;border-radius:2px;width:6px}
-.weeks .d:hover .bar{filter:brightness(1.08)}
-.weeks .n{font-size:11px;color:var(--soft);font-variant-numeric:tabular-nums;margin-top:6px;line-height:1}
-.weeks .w{font-size:10px;color:var(--faint);margin-top:3px;line-height:1;height:10px}
-.weeks .d.sel .n{color:var(--brand);font-weight:700} .weeks .d.now .n{font-weight:700;color:var(--ink)}
-.weeks .tip,.strip .tip{position:absolute;bottom:calc(100% + 6px);left:50%;transform:translateX(-50%);background:var(--ink);color:var(--surface);font-size:12px;line-height:1.35;
-  padding:7px 10px;border-radius:9px;white-space:nowrap;pointer-events:none;opacity:0;transition:opacity .1s;z-index:4;box-shadow:0 6px 18px rgba(0,0,0,.18)}
-.weeks .tip b,.strip .tip b{display:block;font-weight:700}
-.weeks .d:hover .tip,.weeks .d:focus-visible .tip,.strip a:hover .tip,.strip a:focus-visible .tip,.strip .band:hover .tip{opacity:1}
+.page{display:flex;flex-direction:column;gap:16px}
+.cols{display:flex;gap:16px;flex-wrap:wrap;align-items:stretch}
+.head{display:flex;align-items:flex-end;gap:16px;flex-wrap:wrap;margin-bottom:4px} .head .left{flex:1;min-width:260px}
+.head h1{margin:4px 0 0}
+/* Day arrows either side of the date, and the Calendar button. */
+.datenav{position:relative;display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px}
+.datenav .date{padding:0 6px}
+.round{width:40px;height:40px;flex:none;border-radius:50%;border:1px solid var(--line);background:var(--surface);color:var(--ink);cursor:pointer;display:inline-flex;align-items:center;justify-content:center;padding:0}
+.round:hover{background:var(--raised)} .round.off{color:var(--faint);pointer-events:none}
+details.cal{display:contents}
+details.cal>summary{list-style:none;height:40px;border-radius:99px;border:1px solid var(--brand-line);background:var(--brand-tint);color:var(--link);font-size:13px;font-weight:600;padding:0 14px;cursor:pointer;display:inline-flex;align-items:center;gap:8px}
+details.cal>summary::-webkit-details-marker{display:none}
+.calpop{position:absolute;top:48px;left:0;z-index:6;width:336px;max-width:calc(100vw - 32px);background:var(--raised);border:1px solid var(--line);border-radius:22px;padding:18px;box-shadow:0 24px 60px rgba(0,0,0,.45)}
+.calpop .t{display:flex;align-items:baseline;gap:8px} .calpop .t b{font-family:var(--display);font-size:18px;letter-spacing:-.3px;flex:1}
+.calgrid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:4px}
+.calgrid.names{margin-top:14px;font-size:11px;font-weight:600;color:var(--soft);text-align:center}
+.calgrid.days{margin-top:6px}
+.calgrid .c{height:40px;border-radius:12px;font-size:13px;font-weight:600;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;color:var(--faint)}
+.calgrid a.c{background:var(--surface);color:var(--ink);border:1px solid var(--line)} .calgrid a.c:hover{text-decoration:none;border-color:var(--brand-line)}
+.calgrid a.c.sel{background:var(--brand);border-color:var(--brand);color:var(--on-brand)}
+.calgrid .c i{width:5px;height:5px;border-radius:50%;background:transparent} .calgrid .c span{line-height:1}
+.calgrid .c i.good{background:var(--good-fill)} .calgrid .c i.warn{background:var(--warn-fill)} .calgrid .c i.bad{background:var(--bad-fill)}
+.calgrid a.c.sel i.good,.calgrid a.c.sel i.warn,.calgrid a.c.sel i.bad{background:var(--on-brand)}
+/* Summary card. */
+.sum{flex:1 1 360px;display:flex;flex-direction:column;gap:18px}
+.sum .lead{display:flex;align-items:flex-end;gap:14px;flex-wrap:wrap}
+.sum .big{font-family:var(--display);font-size:112px;line-height:.85;font-weight:700;letter-spacing:-6px;font-variant-numeric:tabular-nums}
+.sum .big small{font-size:52px;letter-spacing:-1px}
+.sum .of{color:var(--soft);font-size:14px;line-height:1.45;padding-bottom:4px}
+.marks{display:flex;gap:3px} .marks i{flex:1;height:30px;border-radius:3px;background:var(--brand)}
+.marks i.away.good{background:var(--good-fill)} .marks i.away.warn{background:var(--warn-fill)} .marks i.away.bad{background:var(--bad-fill)} .marks i.none{background:var(--idle)}
+.minis{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.mini{background:var(--raised);border-radius:14px;padding:12px 14px;min-width:0} .mini .k{font-size:12px;font-weight:600;color:var(--soft)}
+.mini .v{font-family:var(--display);font-size:19px;font-weight:700;letter-spacing:-.4px;white-space:nowrap}
+.label{font-size:13px;font-weight:600;letter-spacing:1.2px;text-transform:uppercase;color:var(--soft)}
+.cardtop{display:flex;align-items:baseline;gap:6px 12px;flex-wrap:wrap} .cardtop .title{flex:1 0 auto;white-space:nowrap}
+/* Four weeks, one bar a day. */
+.fourweeks{flex:3 1 520px;min-width:0;display:flex;flex-direction:column}
+.weeks{display:flex;gap:10px;margin-top:22px;flex:1;align-items:flex-end}
+.weeks .axis{display:flex;flex-direction:column;justify-content:space-between;height:190px;margin-bottom:34px;font-size:11px;color:var(--soft);text-align:right;min-width:30px;font-variant-numeric:tabular-nums}
+.weeks .bars{display:flex;gap:4px;flex:1;min-width:0}
+.weeks .d{position:relative;flex:1;min-width:0;display:flex;flex-direction:column;align-items:center;border-radius:12px;padding:0 0 8px;color:inherit}
+.weeks .d:hover{text-decoration:none;background:var(--raised)} .weeks .d.sel{background:var(--brand-tint)}
+.weeks .col{height:190px;width:100%;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:5px}
+.weeks .val{font-family:var(--display);font-size:12px;font-weight:700;line-height:1}
+.weeks .bar{width:min(64%,20px);min-height:6px;border-radius:99px;background:var(--good-fill)}
+.weeks .bar.warn{background:var(--warn-fill)} .weeks .bar.bad{background:var(--bad-fill)} .weeks .bar.none{background:var(--idle);width:6px;height:6px}
+.weeks .n{font-size:11px;margin-top:8px;line-height:1;color:var(--soft);font-variant-numeric:tabular-nums}
+.weeks .w{font-size:10px;margin-top:5px;line-height:1;height:10px;color:var(--soft)}
+.weeks .d.sel .n{color:var(--link);font-weight:700}
+.tip{position:absolute;bottom:calc(100% + 6px);left:50%;transform:translateX(-50%);background:var(--ink);color:var(--canvas);font-size:12px;line-height:1.35;
+  padding:7px 10px;border-radius:10px;white-space:nowrap;pointer-events:none;opacity:0;transition:opacity .1s;z-index:4}
+.tip b{display:block;font-weight:700}
+.weeks .d:hover .tip,.weeks .d:focus-visible .tip,.line a:hover .tip,.line a:focus-visible .tip{opacity:1}
 .weeks .d:nth-child(-n+3) .tip{left:0;transform:none} .weeks .d:nth-last-child(-n+3) .tip{left:auto;right:0;transform:none}
-/* The day as one strip: in-use time, sprints, and every switch away. */
-.strip{position:relative;margin-top:14px}
-.strip .lane{position:relative;height:44px;border-radius:10px;background:var(--sunk)}
-.strip .band{position:absolute;top:10px;height:24px;border-radius:5px;background:color-mix(in srgb,var(--soft) 26%,transparent)}
-.strip .band.sprint{top:5px;height:34px;background:color-mix(in srgb,var(--brand) 22%,transparent);box-shadow:inset 0 0 0 1.5px color-mix(in srgb,var(--brand) 55%,transparent)}
-.strip a.mark{position:absolute;top:10px;height:24px;min-width:3px;border-radius:3px;background:var(--warn);box-shadow:0 0 0 1px var(--sunk)}
-.strip a.mark.bad{background:var(--bad)} .strip a.mark:hover{filter:brightness(1.1);z-index:3}
-.strip .ticks{position:relative;height:18px;margin-top:6px;font-size:11px;color:var(--faint);font-variant-numeric:tabular-nums}
-.strip .ticks span{position:absolute;transform:translateX(-50%);white-space:nowrap} .strip .ticks span:first-child{transform:none} .strip .ticks span:last-child{transform:translateX(-100%)}
-.key{display:flex;gap:16px;flex-wrap:wrap;font-size:12px;color:var(--soft);margin-top:10px}
-.key i{display:inline-block;width:12px;height:10px;border-radius:3px;margin-right:6px;vertical-align:-1px}
-.cardhead{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap} .cardhead b{font-size:15px}
+/* The day as one bar. */
+.keys{display:flex;gap:18px;flex-wrap:wrap;font-size:13px;color:var(--soft)} .keys span{display:inline-flex;align-items:center;gap:7px}
+.keys i{width:10px;height:10px;border-radius:50%} .k-on{background:var(--good-fill)} .k-bad{background:var(--bad-fill)} .k-off{background:var(--warn-fill)} .k-idle{background:var(--idle)}
+.line{position:relative;display:flex;height:28px;border-radius:99px;background:var(--idle);margin-top:20px}
+.line>*{position:relative;display:block;min-width:0} .line>:first-child{border-radius:99px 0 0 99px} .line>:last-child{border-radius:0 99px 99px 0}
+.line .on{background:var(--good-fill)} .line .bad{background:var(--bad-fill);min-width:3px} .line .off{background:var(--warn-fill);min-width:3px} .line .idle{background:var(--idle)}
+.line a:hover{filter:brightness(1.12)}
+.hours{position:relative;height:18px;margin-top:10px;font-size:12px;color:var(--soft);font-variant-numeric:tabular-nums}
+.hours span{position:absolute;transform:translateX(-50%);white-space:nowrap} .hours span:first-child{transform:none} .hours span:last-child{transform:translateX(-100%)}
+/* The three cards. */
+.third{flex:1 1 320px;min-width:0;display:flex;flex-direction:column;gap:14px}
+.sprint .t{display:flex;align-items:baseline;gap:10px} .sprint .t b{flex:1;min-width:0;font-weight:600;font-size:14.5px}
+.sprint .pct{font-family:var(--display);font-size:18px;font-weight:700;white-space:nowrap}
+.thin{height:6px;border-radius:99px;background:var(--line);overflow:hidden;margin:7px 0} .thin i{display:block;height:6px;border-radius:99px;background:var(--good-fill)}
+.thin i.warn{background:var(--warn-fill)} .thin i.bad{background:var(--bad-fill)}
+.meta{font-size:12.5px;color:var(--soft)}
+.item{display:flex;gap:10px;align-items:flex-start} .item b{font-weight:600;font-size:14.5px}
+.quote{padding:12px 14px;background:var(--raised);border-radius:14px;font-size:14px}
+.foot{font-size:12.5px;color:var(--soft);border-top:1px solid var(--line2);padding-top:14px;margin-top:auto}
+/* Every switch away. */
+.swhead{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin-top:20px}
+.swhead .big{font-family:var(--display);font-size:30px;font-weight:700;letter-spacing:-1px;flex:1;min-width:220px;margin:0;text-transform:none;color:var(--ink)}
+.switch{display:flex;gap:22px;flex-wrap:wrap;padding:22px}
+.switch .info{flex:1 1 210px;min-width:0;display:flex;flex-direction:column;gap:6px}
+.switch .site{font-family:var(--display);font-size:24px;font-weight:700;letter-spacing:-.6px;line-height:1.2;margin-top:4px;overflow-wrap:anywhere}
+.switch .awaybox{margin-top:auto;padding-top:16px}
+.switch .away{font-family:var(--display);font-size:44px;line-height:1.05;font-weight:700;letter-spacing:-1.5px}
 .switch:target{border-color:var(--brand);box-shadow:0 0 0 3px var(--ring)}
-html{scroll-padding-top:76px;scroll-behavior:smooth}
+.shots{flex:4 1 520px;min-width:0;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;align-content:start}
+.shot{position:relative;display:block;aspect-ratio:16/10;border:1px solid var(--line);border-radius:16px;overflow:hidden;background:var(--canvas);cursor:zoom-in;padding:0;width:100%}
+.shot img{display:block;width:100%;height:100%;object-fit:cover;object-position:top left}
+.shot .tag{position:absolute;left:12px;top:12px;background:rgba(11,12,16,.78);color:#f2f3f7;font-size:12px;font-weight:700;padding:4px 10px;border-radius:99px}
+.shot .play{display:flex;align-items:center;justify-content:center;height:100%;color:var(--soft);font-size:40px}
+.trow{display:flex;align-items:center;gap:20px;padding:16px 0;border-top:1px solid var(--line2);flex-wrap:wrap}
+.trow .name{flex:1 1 220px;min-width:0} .trow .name b{display:block;font-family:var(--display);font-size:20px;letter-spacing:-.4px;overflow-wrap:anywhere}
+.trow .split{flex:2 1 280px;display:flex;height:12px;border-radius:99px;overflow:hidden;background:var(--line)}
+.trow .split .b{background:var(--bad-fill)} .trow .split .o{background:var(--warn-fill)}
+.trow .tot{width:120px;text-align:right;font-family:var(--display);font-size:28px;font-weight:700;letter-spacing:-.8px;white-space:nowrap}
+html{scroll-padding-top:20px;scroll-behavior:smooth}
+.switch .info .when2{display:none} .datenav .date .short{display:none}
 @media (max-width:760px){
-  .weeks{gap:6px} .weeks .axis{min-width:24px;font-size:10px} .weeks .axis,.weeks .col,.weeks .grid{height:104px}
-  .weeks .bars{gap:1px} .weeks .bar{width:72%} .weeks .n{font-size:9.5px} .weeks .w{display:none}
-  .weeks .d:not(.sel):not(.now):nth-child(even) .n{visibility:hidden} /* every other date, so they do not collide */
-  .cardhead{display:block} .cardhead .small{display:block;margin-top:2px}
-  .figs{gap:16px} .figs .v{font-size:17px}
-  .strip .ticks span:nth-child(even){display:none}
-  .sprintrow .num{min-width:0!important;text-align:left!important}
+  /* On a phone the day reads: summary, timeline, four weeks, then the rest. */
+  .cols{display:contents} .sum,.fourweeks,.third{flex:none} .page>*,.third{order:5} .head,.page>p,.page>.row{order:0} .sum{order:1} .timeline{order:2} .fourweeks{order:3}
+  .page{gap:14px} .head{display:block} .head h1{font-size:48px;letter-spacing:-2px;margin:12px 0 14px}
+  .datenav{flex-wrap:nowrap;gap:6px;margin-bottom:0} .datenav .date{flex:1;text-align:center;font-size:13px;letter-spacing:1.2px}
+  .datenav .date .long{display:none} .datenav .date .short{display:inline}
+  .round{width:44px;height:44px} details.cal>summary{width:44px;height:44px;padding:0;justify-content:center;border-radius:50%} details.cal>summary span{display:none}
+  .calpop{left:auto;right:0;top:52px}
+  .sum .big{font-size:96px;letter-spacing:-5px} .sum .big small{font-size:44px} .marks i{height:26px}
+  .minis{gap:8px} .mini{padding:10px 12px} .mini .v{font-size:17px}
+  .weeks{gap:0;margin-top:14px} .weeks .axis{display:none} .weeks .bars{gap:2px} .weeks .col{height:130px} .weeks .bar{width:64%} .weeks .val{display:none}
+  .weeks .n{font-size:10px;margin-top:7px} .weeks .w{display:none}
+  .weeks .d:not(.sel):not(.lab) .n{visibility:hidden}
+  .cardtop .hint{display:block;width:100%}
+  .keys{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 12px;font-size:12.5px;margin-top:14px}
+  .timeline{display:flex;flex-direction:column} .timeline .cardtop{display:contents} .timeline .keys{order:3}
+  .line{height:26px;margin-top:14px} .hours{font-size:11px;margin-top:8px} .hours span:not(:first-child):not(:last-child):nth-child(odd){display:none}
+  .swhead .big{font-size:26px;letter-spacing:-.8px;flex-basis:100%} .swhead .seg{width:100%}
+  .switch{padding:16px;gap:12px} .switch .info{display:grid;grid-template-columns:1fr auto;gap:2px 10px;flex-basis:100%}
+  .switch .info>*{grid-column:1} .switch .awaybox{grid-column:2;grid-row:1/span 4;margin:0;padding:0;text-align:right} .switch .awaybox .k{display:none}
+  .switch .info .when{display:none} .switch .info .when2{display:block}
+  .switch .site{font-size:19px;margin-top:0} .switch .away{font-size:28px;letter-spacing:-1px}
+  .shots{gap:8px;flex-basis:100%} .shot{border-radius:12px} .shot .tag{left:8px;top:8px;font-size:11px;padding:3px 8px}
+  .trow{display:grid;grid-template-columns:1fr auto;gap:8px 10px;padding:14px 0} .trow .split{grid-column:1/-1;grid-row:2;height:10px} .trow .tot{width:auto;font-size:24px}
+  .trow .name b{font-size:18px}
   #viewer{padding:10px;gap:8px} #viewer .info{gap:14px;padding:10px 12px} #viewer .info .v{font-size:14px}
   #viewer .mid{gap:4px} #viewer button.round{width:38px;height:38px}
 }
-.shots{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin-top:12px}
-.shot{position:relative;display:block;border:1px solid var(--line);border-radius:10px;overflow:hidden;background:#000;cursor:zoom-in;padding:0;width:100%}
-.shot img{display:block;width:100%;height:auto} .shot .tag{position:absolute;left:8px;top:8px;background:rgba(0,0,0,.6);color:#fff;font-size:11px;font-weight:700;padding:3px 8px;border-radius:99px}
-.shot .play{display:flex;align-items:center;justify-content:center;height:150px;color:#fff;font-size:40px}
-.figs{display:flex;gap:26px;flex-wrap:wrap;margin-top:12px} .figs .k{font-size:11px;letter-spacing:.6px;text-transform:uppercase;color:var(--soft);font-weight:700}
-.figs .v{font-size:21px;font-weight:700;font-variant-numeric:tabular-nums}
 #viewer{position:fixed;inset:0;background:rgba(0,0,0,.93);z-index:20;display:none;flex-direction:column;padding:16px;gap:12px;color:#fff}
 #viewer.open{display:flex}
 #viewer .top{display:flex;align-items:center;gap:10px;flex-wrap:wrap} #viewer .site{font-size:19px;font-weight:700}
@@ -70,149 +140,214 @@ html{scroll-padding-top:76px;scroll-behavior:smooth}
 </style>
 {% endblock %}
 {% block body %}
-<div class="row">
-  <div><h1>{{ 'Today' if is_today else title }}</h1>
-    <div class="muted">{{ title + ' · ' if is_today }}sprints, and time outside them</div></div>
-  <div class="spread row" style="gap:8px">
-    <a class="ghost" href="{{ url_for('day_page', day=previous, **view.args) }}" aria-label="Earlier day">‹ Earlier</a>
-    <a class="ghost {{ '' if following else 'off' }}" href="{{ url_for('day_page', day=following, **view.args) if following else '#' }}" aria-label="Later day">Later ›</a>
-    {% if not is_today %}<a class="ghost" href="{{ url_for('overview', **view.args) }}">Today</a>{% endif %}
-  </div>
-</div>
-{% include "_filter.html" %}
+{% set arrow_left %}<svg aria-hidden="true" width="8" height="14" viewBox="0 0 8 14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 1.5L1.5 7l5 5.5"/></svg>{% endset %}
+{% set arrow_right %}<svg aria-hidden="true" width="8" height="14" viewBox="0 0 8 14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1.5 1.5l5 5.5-5 5.5"/></svg>{% endset %}
+<div class="page">
 
-<div class="card" style="margin-top:16px">
-  <div class="cardhead"><b>Distraction, day by day</b>
-    <span class="muted small">{{ 'Last four weeks' if not weeks.partial else ('Since ' + weeks.since if weeks.recorded else 'Nothing recorded yet') }} · share of tracked time spent away · choose a day to open it</span></div>
-  {% if weeks.recorded %}
-  <div class="weeks" role="group" aria-label="Distraction by day">
-    <div class="axis" aria-hidden="true"><span>{{ weeks.top }}%</span><span>{{ weeks.top // 2 }}%</span><span>0%</span></div>
-    <div class="plot">
-      <div class="grid" aria-hidden="true"><i></i><i></i><i></i></div>
+<div class="head">
+  <div class="left">
+    <div class="datenav">
+      <a class="round" href="{{ url_for('day_page', day=previous, **view.args) }}" aria-label="Earlier day">{{ arrow_left }}</a>
+      <div class="eyebrow date"><span class="long">{{ date_label }}</span><span class="short">{{ date_short }}</span></div>
+      {% if following %}<a class="round" href="{{ url_for('day_page', day=following, **view.args) }}" aria-label="Later day">{{ arrow_right }}</a>
+      {% else %}<span class="round off" aria-label="Later day" aria-disabled="true">{{ arrow_right }}</span>{% endif %}
+      <details class="cal">
+        <summary aria-label="Choose a date"><svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="1.8" y="3" width="12.4" height="11" rx="2.5"/><path d="M1.8 6.6h12.4M5 1.5v3M11 1.5v3"/></svg><span>Calendar</span></summary>
+        <div class="calpop" role="group" aria-label="Choose a date">
+          <div class="t"><b>{{ weeks.calendar.title }}</b><span class="muted" style="font-size:12px">Last 14 days</span></div>
+          <div class="calgrid names" aria-hidden="true"><div>M</div><div>T</div><div>W</div><div>T</div><div>F</div><div>S</div><div>S</div></div>
+          <div class="calgrid days">
+            {% for c in weeks.calendar.cells %}
+              {% if c.open %}<a class="c {{ 'sel' if c.selected }}" href="{{ url_for('day_page', day=c.key, **view.args) }}" aria-label="{{ c.label }}" {{ 'aria-current=date' if c.selected }}><span>{{ c.n }}</span><i class="{{ c.dot }}"></i></a>
+              {% else %}<span class="c" aria-hidden="true"><span>{{ c.n }}</span><i></i></span>{% endif %}
+            {% endfor %}
+          </div>
+          <div class="muted" style="font-size:12px;margin-top:12px">The dot shows how distracted that day was. Older days: use the four-week graph.</div>
+        </div>
+      </details>
+    </div>
+    <h1>{{ view.title }}</h1>
+  </div>
+  {% include "_filter.html" %}
+</div>
+{% if view.key == 'me' %}<p class="muted small" style="margin:-6px 0 0">Only you can see your own records.</p>{% endif %}
+{% if view.devices %}<div class="row" style="gap:8px">
+  <a class="chip sub {{ 'on' if not view.device }}" href="{{ url_for(request.endpoint, who=view.key, **request.view_args) }}">All computers</a>
+  {% for d in view.devices %}<a class="chip sub {{ 'on' if view.device == d }}" href="{{ url_for(request.endpoint, who=view.key, device=d, **request.view_args) }}">{{ d }}</a>{% endfor %}
+</div>{% endif %}
+
+<div class="cols">
+  <section class="card sum" aria-label="Summary of the day">
+    <div class="row" style="gap:8px"><div class="label" style="flex:1">Distracted</div>
+      <span class="pill {{ totals.level if totals.tracked }}">{{ totals.word }}</span></div>
+    <div class="lead">
+      <div class="big {{ totals.level if totals.tracked }}">{{ totals.percent }}<small>%</small></div>
+      <div class="of">{{ duration(totals.away) }} away<br>of {{ duration(totals.tracked) }} tracked</div>
+    </div>
+    <div class="marks" role="img" aria-label="{{ 100 - totals.percent }} percent on task, {{ totals.percent }} percent away">
+      {% for n in range(40) %}<i class="{{ 'none' if not totals.tracked else ('away ' ~ totals.level if n >= 40 - totals.ticks else '') }}"></i>{% endfor %}
+    </div>
+    <div class="minis">
+      <div class="mini"><div class="k">Time away</div><div class="v">{{ duration(totals.away) }}</div></div>
+      <div class="mini"><div class="k">Switches</div><div class="v">{{ totals.switches }}</div></div>
+      <div class="mini"><div class="k">Tracked</div><div class="v">{{ duration(totals.tracked) }}</div></div>
+    </div>
+  </section>
+
+  <section class="card fourweeks">
+    <div class="cardtop"><h2 class="title">Four weeks, day by day</h2>
+      <span class="muted small hint">{{ 'Since ' + weeks.since + ' · ' if weeks.partial and weeks.recorded }}Share of tracked time spent away · choose a day to open it</span></div>
+    {% if weeks.recorded %}
+    <div class="weeks" role="group" aria-label="Distraction by day">
+      <div class="axis" aria-hidden="true"><span>{{ weeks.top }}%</span><span>{{ weeks.top // 2 }}%</span><span>0%</span></div>
       <div class="bars">
       {% for d in weeks.days %}
-        <a class="d {{ 'sel' if d.selected }} {{ 'now' if d.today }}" href="{{ url_for('day_page', day=d.key, **view.args) }}"
+        <a class="d {{ 'sel' if d.selected }} {{ 'lab' if loop.index0 % 4 == 0 or loop.last }}" href="{{ url_for('day_page', day=d.key, **view.args) }}"
            aria-label="{{ d.label }}: {{ d.summary }}" {{ 'aria-current=date' if d.selected }}>
           <span class="tip"><b>{{ d.label }}</b>{{ d.summary }}</span>
-          <span class="col"><span class="bar {{ d.level if d.tracked else 'none' }}" style="{{ 'height:' ~ d.height ~ '%' if d.tracked }}"></span></span>
+          <span class="col">{% if d.selected and d.tracked %}<span class="val">{{ d.percent }}%</span>{% endif %}
+            <span class="bar {{ d.level if d.tracked else 'none' }}" style="{{ 'height:' ~ (d.height * 0.86)|round(1) ~ '%' if d.tracked }}"></span></span>
           <span class="n">{{ d.day }}</span>
-          <span class="w">{{ d.month if d.first_of_month or loop.first else (d.weekday[0] if weeks.days|length <= 14 else ('M' if d.monday else '')) }}</span>
+          <span class="w">{{ d.month if d.first_of_month or loop.first else ('M' if d.monday else '') }}</span>
         </a>
       {% endfor %}
       </div>
     </div>
-  </div>
-  {% else %}
-  <p class="muted" style="margin:12px 0 0">Days appear here from the first day a linked Mac is used.</p>
-  {% endif %}
-</div>
-
-<div class="tiles">
-  <div class="card tile"><div class="k">Distracted</div><div class="v {{ totals.level if totals.tracked }}">{{ totals.percent }}%</div></div>
-  <div class="card tile"><div class="k">Time away</div><div class="v">{{ duration(totals.away) }}</div></div>
-  <div class="card tile"><div class="k">Switches</div><div class="v">{{ totals.switches }}</div></div>
-  <div class="card tile"><div class="k">Tracked</div><div class="v">{{ duration(totals.tracked) }}</div></div>
+    {% else %}
+    <p class="muted" style="margin:14px 0 0">Nothing recorded yet. Days appear here from the first day a linked Mac is used.</p>
+    {% endif %}
+  </section>
 </div>
 
 {% if timeline %}
-<div class="card" style="margin-top:12px">
-  <div class="cardhead"><b>Timeline</b><span class="muted small">the day from first use to last · choose a mark to jump to that switch</span></div>
-  <div class="strip">
-    <div class="lane">
-      {% for b in timeline.bands %}<span class="band {{ 'sprint' if b.sprint }}" style="left:{{ b.left }}%;width:{{ b.width }}%" title="{{ b.label }}"></span>{% endfor %}
-      {% for m in timeline.marks %}<a class="mark {{ 'bad' if m.bad }}" href="#sw-{{ m.id }}" style="left:{{ m.left }}%;width:{{ m.width }}%" aria-label="{{ m.label }}"><span class="tip">{{ m.label }}</span></a>{% endfor %}
+<section class="card timeline">
+  <div class="cardtop"><h2 class="title">Timeline</h2>
+    <div class="keys"><span><i class="k-on"></i>On task</span><span><i class="k-bad"></i>Distraction</span><span><i class="k-off"></i>Off task</span><span><i class="k-idle"></i>Mac not in use</span></div></div>
+  <div class="line" role="group" aria-label="{{ timeline.summary }}">
+    {% for g in timeline.segments %}{% if g.id %}<a class="{{ g.kind }}" href="#sw-{{ g.id }}" style="flex:{{ g.weight }} 0 0" aria-label="{{ g.label }}"><span class="tip">{{ g.label }}</span></a>{% else %}<span class="{{ g.kind }}" style="flex:{{ g.weight }} 0 0" title="{{ g.label }}"></span>{% endif %}{% endfor %}
+  </div>
+  <div class="hours" aria-hidden="true">{% for t in timeline.ticks %}<span style="left:{{ t.left }}%">{{ t.label }}</span>{% endfor %}</div>
+</section>
+{% endif %}
+
+<div class="cols">
+  <section class="card third">
+    <div class="row" style="gap:10px"><h2 class="title" style="flex:1">Sprints</h2></div>
+    {% for s in sprints %}
+    <div class="sprint">
+      <div class="t"><b>{{ s.task }}</b><span class="pct {{ level(1 - s.focus / 100) }}">{{ s.focus }}%</span></div>
+      <div class="thin" role="img" aria-label="{{ s.focus }} percent focused"><i class="{{ level(1 - s.focus / 100) }}" style="width:{{ s.focus }}%"></i></div>
+      <div class="meta">{{ s.span }} · {{ 'until stopped' if s.open else (s.planned // 60)|string + ' min planned' }} · {{ s.status }} · {{ 'no switches' if not s.events else s.events|length ~ ' switch' ~ ('es' if s.events|length != 1 else '') ~ ', ' ~ duration(s.away) ~ ' away' }} · {{ s.who }}</div>
+      {% if s.added or s.removed %}<div class="meta" style="margin-top:4px"><span class="pill warn">Apps changed for this sprint</span>
+        {% if s.added %} allowed: <b>{{ s.added|join(", ") }}</b>{% endif %}{% if s.removed %} · not allowed: <b>{{ s.removed|join(", ") }}</b>{% endif %}</div>{% endif %}
     </div>
-    <div class="ticks" aria-hidden="true">{% for t in timeline.ticks %}<span style="left:{{ t.left }}%">{{ t.label }}</span>{% endfor %}</div>
-  </div>
-  <div class="key">
-    <span><i style="background:color-mix(in srgb,var(--soft) 26%,transparent)"></i>Mac in use</span>
-    <span><i style="background:color-mix(in srgb,var(--brand) 22%,transparent);box-shadow:inset 0 0 0 1.5px color-mix(in srgb,var(--brand) 55%,transparent)"></i>Sprint</span>
-    <span><i style="background:var(--bad)"></i>Distraction</span>
-    <span><i style="background:var(--warn)"></i>Off task during a sprint</span>
+    {% else %}<div class="muted">No sprints this day.</div>{% endfor %}
+  </section>
+
+  <section class="card third">
+    <div class="row" style="gap:8px"><h2 class="title" style="flex:1">Web searches</h2>
+      <span class="pill good">{{ search_counts.work }} work</span><span class="pill {{ 'bad' if search_counts.distraction else '' }}">{{ search_counts.distraction }} distraction</span>
+      {% if search_counts.personal %}<span class="pill">{{ search_counts.personal }} private</span>{% endif %}</div>
+    {% for x in searches %}
+    <div class="item"><div style="flex:1;min-width:0"><b>{{ x.text }}</b><div class="meta">{{ x.reason }}{% if x.task %} · during: {{ x.task }}{% endif %}</div></div>
+      <div class="meta num" style="font-weight:400;white-space:nowrap">{{ x.localTime }}{% if several and x.who %}<br>{{ x.who }}{% endif %}</div></div>
+    {% endfor %}
+    <div class="foot">Only distraction searches are listed. Work searches are counted, and private topics are never recorded.</div>
+  </section>
+
+  <section class="card third">
+    <div class="row" style="gap:10px"><h2 class="title" style="flex:1">"Needed for work" requests</h2></div>
+    {% for r in requests %}
+    <div class="row" style="gap:8px"><b style="flex:1;font-weight:600;font-size:14.5px">{{ r.host }}</b>
+      <span class="pill {{ 'bad' if r.decision == 'deny' else 'good' }}">{{ r.decisionLabel }}{% if r.decision == 'approve_temporary' %} · {{ r.grantedMinutes }} min{% endif %}</span></div>
+    <div class="quote">{{ r.reason }}</div>
+    <div class="meta">{{ r.localTime }}{% if several %} · {{ r.who }}{% endif %} · {{ r.explanation }}</div>
+    {% else %}<div class="muted">No requests this day.</div>{% endfor %}
+  </section>
+</div>
+
+<div class="swhead">
+  <h2 class="big">Every switch away</h2>
+  <span class="muted small">{{ switches|length }} {{ 'today' if is_today else 'this day' }} · {{ duration(totals.away) }} away in all</span>
+  <div class="seg" role="group" aria-label="How to show switches" id="sw-mode">
+    <a href="{{ url_for(request.endpoint, view='summary', **dict(view.args, **request.view_args)) }}" data-mode="summary" class="{{ 'on' if show == 'summary' }}" aria-pressed="{{ 'true' if show == 'summary' else 'false' }}" role="button">Summary</a>
+    <a href="{{ url_for(request.endpoint, **dict(view.args, **request.view_args)) }}" data-mode="detailed" class="{{ 'on' if show == 'detailed' }}" aria-pressed="{{ 'true' if show == 'detailed' else 'false' }}" role="button">Detailed</a>
   </div>
 </div>
-{% endif %}
+{% if pictures_gone and switches %}<p class="muted small" style="margin:-6px 0 0">Pictures are kept for {{ keep_days }} days, so this day is shown without them. Every switch is still listed.</p>{% endif %}
 
-{% if sprints %}
-<h2>Sprints</h2>
-<div class="stack">
-{% for s in sprints %}
-  <div class="card row sprintrow">
-    <div style="flex:1;min-width:200px"><div style="font-weight:700">{{ s.task }}</div>
-      <div class="muted small">{{ s.clock }} · {{ 'until stopped' if s.open else (s.planned // 60)|string + ' min planned' }} · {{ s.who }}</div>
-      {% if s.added or s.removed %}<div class="small" style="margin-top:4px"><span class="pill warn">Apps changed for this sprint</span>
-        {% if s.added %} allowed: <b>{{ s.added|join(", ") }}</b>{% endif %}{% if s.removed %} · not allowed: <b>{{ s.removed|join(", ") }}</b>{% endif %}</div>{% endif %}</div>
-    <span class="pill {{ 'good' if s.status == 'Completed' else ('bad' if s.status == 'Interrupted' else 'warn') }}">{{ s.status }}</span>
-    <div class="small muted">{{ s.events|length }} switches · {{ duration(s.away) }} away</div>
-    <div class="num {{ level(1 - s.focus / 100) }}" style="font-size:20px;min-width:92px;text-align:right">{{ s.focus }}% focused</div>
+<section class="card" id="sw-summary" style="padding:26px 26px 12px" {{ 'hidden' if show != 'summary' }}>
+  <div class="muted small" style="margin-bottom:10px">Time added up for each app and website, most first. Switch to Detailed for every visit with its screenshots.</div>
+  {% for t in switch_totals %}
+  <div class="trow">
+    <div class="name"><b>{{ t.site }}</b><span class="muted small">{{ t.meta }}</span></div>
+    <div class="split" role="img" aria-label="{{ t.label }}"><i class="b" style="width:{{ t.bad_width }}%"></i><i class="o" style="width:{{ t.off_width }}%"></i></div>
+    <div class="tot">{{ t.total_text }}</div>
   </div>
-{% endfor %}
-</div>
-{% endif %}
+  {% else %}<div class="good" style="font-weight:700;padding-bottom:14px">No switches away recorded this day.</div>{% endfor %}
+</section>
 
-{% if search_counts.work or search_counts.distraction or search_counts.personal %}
-<h2>Web searches</h2>
-<div class="card">
-  <div class="row"><span class="pill good">{{ search_counts.work }} work</span><span class="pill {{ 'bad' if search_counts.distraction else '' }}">{{ search_counts.distraction }} distraction</span>
-    {% if search_counts.personal %}<span class="pill">{{ search_counts.personal }} private</span>{% endif %}</div>
-  {% for x in searches %}
-    <div class="row" style="margin-top:12px;align-items:flex-start">
-      <div style="flex:1"><div style="font-weight:700">{{ x.text }}</div><div class="muted small">{{ x.reason }}{% if x.task %} · during: {{ x.task }}{% endif %}</div></div>
-      <div class="muted small num">{{ x.localTime }}{% if several and x.who %}<br>{{ x.who }}{% endif %}</div>
-    </div>
-  {% endfor %}
-  <p class="muted small" style="margin:12px 0 0">Only distraction searches are listed. Work searches are counted, and private topics are never recorded.</p>
-</div>
-{% endif %}
-
-{% if requests %}
-<h2>"Needed for work" requests</h2>
-<div class="stack">
-{% for r in requests %}
-  <div class="card">
-    <div class="row"><b>{{ r.host }}</b><span class="muted small">{{ r.localTime }} · {{ r.who }}</span>
-      <span class="spread pill {{ 'bad' if r.decision == 'deny' else 'good' }}">{{ r.decisionLabel }}{% if r.decision == 'approve_temporary' %} · {{ r.grantedMinutes }} min{% endif %}</span></div>
-    <div style="margin:8px 0;padding:9px 11px;background:var(--canvas);border-radius:8px">{{ r.reason }}</div>
-    <div class="muted small">{{ r.explanation }}</div>
-  </div>
-{% endfor %}
-</div>
-{% endif %}
-
-<h2>Every switch away</h2>
-{% if pictures_gone and switches %}<p class="muted small" style="margin:-4px 0 10px">Pictures are kept for {{ keep_days }} days, so this day is shown without them. Every switch is still listed.</p>{% endif %}
-<div class="stack">
+<div id="sw-detailed" class="page" {{ 'hidden' if show != 'detailed' }}>
 {% for e in switches %}
-  <div class="card switch" id="sw-{{ e.id }}">
-    <div class="row">
-      <div style="flex:1;min-width:180px"><div style="font-weight:700;font-size:16px">{{ e.site }}</div>
-        <div class="muted small">{{ e.detail }}{% if e.during %}{{ ' · ' if e.detail }}during: {{ e.during }}{% endif %}</div>
-        {% if e.who %}<div class="small" style="margin-top:2px;font-weight:600">{{ e.who }}</div>{% endif %}</div>
-      <span class="pill {{ 'bad' if e.category == 'distraction' else 'warn' }}">{{ 'Distraction' if e.category == 'distraction' else 'Off task' }}</span>
-    </div>
-    <div class="figs">
-      <div><div class="k">Started</div><div class="v">{{ e.started }}</div></div>
-      <div><div class="k">Away for</div><div class="v {{ 'bad' if e.category == 'distraction' else 'warn' }}">{{ e.away }}</div></div>
-      <div><div class="k">Ended</div><div class="v">{{ e.ended }}</div></div>
+  {% set bad = e.category == 'distraction' %}
+  <section class="card switch" id="sw-{{ e.id }}">
+    <div class="info">
+      <div><span class="pill {{ 'bad' if bad else 'warn' }}">{{ 'Distraction' if bad else 'Off task during a sprint' }}</span></div>
+      <div class="site">{{ e.site }}</div>
+      <div class="muted small">{{ e.detail }}{% if e.during %}{{ ' · ' if e.detail }}during: {{ e.during }}{% endif %}</div>
+      {% if e.who %}<div class="small" style="font-weight:600">{{ e.who }}</div>{% endif %}
+      <div class="muted small when2 num" style="font-weight:400">{{ e.started_short }} to {{ e.ended_short }}</div>
+      <div class="awaybox">
+        <div class="k" style="font-size:12px;font-weight:600;color:var(--soft)">Away for</div>
+        <div class="away {{ 'bad' if bad else 'warn' }}">{{ e.away }}</div>
+        <div class="muted small when num" style="font-weight:400">{{ e.started }} to {{ e.ended }}</div>
+      </div>
     </div>
     {% if e.media %}
     <div class="shots">
       {% for m in e.media %}
+      {% set role = 'Start' if m.role == 'First seconds' else 'End' %}
       <button class="shot" type="button" data-src="{{ m.url }}" data-kind="{{ m.kind }}" data-role="{{ m.role }}" data-site="{{ e.site }}"
-              data-detail="{{ e.detail }}" data-category="{{ 'Distraction' if e.category == 'distraction' else 'Off task' }}"
-              data-started="{{ e.started }}" data-away="{{ e.away }}" data-ended="{{ e.ended }}">
+              data-detail="{{ e.detail }}" data-category="{{ 'Distraction' if bad else 'Off task' }}"
+              data-started="{{ e.started }}" data-away="{{ e.away }}" data-ended="{{ e.ended }}"
+              aria-label="Open the {{ role|lower }} picture for {{ e.site }}">
         {% if m.kind == 'video' %}<span class="play">▶</span>{% else %}<img src="{{ m.url }}" loading="lazy" alt="{{ m.role }} on {{ e.site }}">{% endif %}
-        <span class="tag">{{ m.role }}</span>
+        <span class="tag">{{ role }} · {{ e.started_short if role == 'Start' else e.ended_short }}</span>
       </button>
       {% endfor %}
     </div>
     {% endif %}
-  </div>
+  </section>
 {% else %}
-  <div class="card"><b class="good">No switches away recorded this day.</b></div>
+  <section class="card"><b class="good">No switches away recorded this day.</b></section>
 {% endfor %}
 </div>
 
+</div>
+<script>
+(function () {
+  // Summary / Detailed: both are on the page, so switching does not reload it. The links still work without this.
+  var mode = document.getElementById('sw-mode'), parts = { summary: document.getElementById('sw-summary'), detailed: document.getElementById('sw-detailed') };
+  if (mode) mode.addEventListener('click', function (e) {
+    var link = e.target.closest('a[data-mode]'); if (!link) return;
+    e.preventDefault();
+    Array.prototype.forEach.call(mode.querySelectorAll('a'), function (a) { var on = a === link; a.classList.toggle('on', on); a.setAttribute('aria-pressed', on ? 'true' : 'false'); });
+    parts.summary.hidden = link.dataset.mode !== 'summary'; parts.detailed.hidden = link.dataset.mode !== 'detailed';
+    history.replaceState(null, '', link.href);
+  });
+  // A timeline mark jumps to its switch, which is only on the page in Detailed.
+  document.addEventListener('click', function (e) {
+    var jump = e.target.closest('.line a'); if (!jump || !mode) return;
+    var detailed = mode.querySelector('a[data-mode=detailed]'); if (parts.detailed.hidden) detailed.click();
+  });
+  // The calendar closes on Escape or a click outside it.
+  var cal = document.querySelector('details.cal');
+  if (cal) {
+    document.addEventListener('click', function (e) { if (cal.open && !cal.contains(e.target)) cal.open = false; });
+    document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && cal.open) { cal.open = false; cal.querySelector('summary').focus(); } });
+  }
+})();
+</script>
 <div id="viewer" role="dialog" aria-label="Picture viewer">
   <div class="top"><span class="site" id="v-site"></span><span class="vp" id="v-category"></span><span class="vp" id="v-role"></span>
     <span class="muted" id="v-detail" style="color:rgba(255,255,255,.7);font-size:13px"></span>
@@ -260,3 +395,4 @@ html{scroll-padding-top:76px;scroll-behavior:smooth}
 })();
 </script>
 {% endblock %}
+

@@ -1,13 +1,9 @@
-{# Whose records are shown. Offered only when there is a choice to make. #}
+{# Whose records are shown: always one person. Offered only when there is a choice to make. #}
 {% set options = groups() %}
-{% if options|length > 1 or view.devices %}
-<div class="row" style="margin:14px 0 4px;gap:8px">
-  {% if options|length > 1 %}{% for o in options %}
-    <a class="chip {{ 'on' if view.key == o.key and not view.device }}" href="{{ url_for(request.endpoint, who=o.key, **request.view_args) }}">{{ o.label }}</a>
-  {% endfor %}{% endif %}
-  {% for d in view.devices %}
-    <a class="chip sub {{ 'on' if view.device == d }}" href="{{ url_for(request.endpoint, who=view.key, device=d, **request.view_args) }}">{{ d }}</a>
+{% if options|length > 1 %}
+<div class="seg" role="group" aria-label="Whose day">
+  {% for o in options %}
+    <a class="{{ 'on' if view.key == o.key }}" {{ 'aria-current=true' if view.key == o.key }} href="{{ url_for(request.endpoint, who=o.key, **request.view_args) }}">{{ o.label }}</a>
   {% endfor %}
 </div>
 {% endif %}
-{% if view.key == 'me' %}<p class="muted small" style="margin:6px 0 0">Only you can see your own records.</p>{% endif %}

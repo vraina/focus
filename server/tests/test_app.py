@@ -4,6 +4,7 @@ import re
 import sys
 import uuid
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 import pytest
 from pymongo import MongoClient
@@ -339,7 +340,7 @@ def test_each_mac_login_is_assigned_to_a_person(w):
     assert assign(admin, "mia", mia).status_code == 302
     assert client.get("/api/config", headers=mia_login).json["member"] == {"name": "Mia", "kind": "kid"}
     upload_sprint(client, mia_login, sid, site="miasite.example.com")
-    assert "Mia on Den iMac · mia" in admin.get(f"/dashboard/day/{today()}").get_data(as_text=True)
+    assert "Mia on Den iMac · mia" in admin.get(f"/dashboard/day/{today()}?who={mia}").get_data(as_text=True)
 
     # Leo picks his own profile in the app. Mia's is taken on this computer, and an adult's cannot be picked.
     assert [p["name"] for p in client.get("/api/config", headers=leo_login).json["profiles"]] == ["Leo"]
@@ -437,7 +438,7 @@ def test_upload_and_dashboard(w):
     assert client.post(f"/api/upload/{sid}/start.json", json={}).status_code == 401
 
     page = admin.get(f"/dashboard/day/{today()}").get_data(as_text=True)
-    assert "espn.com" in page and "10:00:10 AM" in page and "2m 00s" in page and "92% focused" in page
+    assert "espn.com" in page and "10:00:10 AM" in page and "2m 00s" in page and "92 percent focused" in page
     assert "Mia on Den iMac · kid" in page  # who, which computer and which login come from the link, not from what the Mac claims
     assert "<script>alert(1)</script>" not in page and "&lt;script&gt;" in page
     picture = admin.get(f"/dashboard/media/{sid}/e1-start.jpg")
@@ -608,10 +609,16 @@ def test_filter_by_kid_and_computer(w):
     upload_sprint(client, pro, session_id(tail="ccc333"), site="roblox.com", away=300.0)
     client.post("/api/search", json={"query": "NBA scores"}, headers=pro)
     day = f"/dashboard/day/{today()}"
-    everyone = admin.get(day).get_data(as_text=True)  # the default for an admin with several kids is all of them
-    assert all(x in everyone for x in ("tiktok.com", "espn.com", "roblox.com", "NBA scores", "Mia on Den iMac · kid", "8m 00s", "All kids"))
+    # The page always shows one person. With nobody chosen an admin lands on the first kid by name (Leo);
+    # an old link that asks for everyone ("kids") gets the same page, not an error.
+    default = admin.get(day).get_data(as_text=True)
+    assert "Leo&#39;s day" in default and "roblox.com" in default and "tiktok.com" not in default and "All kids" not in default
+    old_link = admin.get(day + "?who=kids")
+    assert old_link.status_code == 200 and "Leo&#39;s day" in old_link.get_data(as_text=True)
+    assert "Mia on Den iMac · kid" in admin.get(day + f"?who={mia}").get_data(as_text=True)
     only_mia = admin.get(day + f"?who={mia}").get_data(as_text=True)
     assert "tiktok.com" in only_mia and "espn.com" in only_mia and "roblox.com" not in only_mia and "NBA scores" not in only_mia and "3m 00s" in only_mia
+    assert "Mia&#39;s day" in only_mia and "All computers" in only_mia  # two computers for one person: a choice of computer
     den_only = admin.get(day + f"?who={mia}&device=Den%20iMac%20%C2%B7%20kid").get_data(as_text=True)
     assert "espn.com" in den_only and "tiktok.com" not in den_only
     only_leo = admin.get(f"/dashboard?who={leo}").get_data(as_text=True)
@@ -811,7 +818,8 @@ def test_the_front_page_is_todays_activity_with_a_graph_since_the_first_record(w
     c = w.browser()
     bars = lambda page: page.count('class="d ')
     page = admin.get("/dashboard").get_data(as_text=True)
-    assert "Today" in page and "Nothing recorded yet" in page and bars(page) == 0 and "Timeline" not in page
+    assert "Mia&#39;s day" in page and "Nothing recorded yet" in page and bars(page) == 0 and "Timeline" not in page
+    assert page.count("Last 14 days") == 1 and page.count('class="c ') >= 14  # the calendar: a fortnight of days to choose
     assert ">Activity<" in page and ">Days<" not in page
     upload_sprint(c, mac, session_id(days_ago=2), days_ago=2)
     upload_sprint(c, mac, session_id(tail="tod111"), site="espn.com", away=300.0)
@@ -821,10 +829,10 @@ def test_the_front_page_is_todays_activity_with_a_graph_since_the_first_record(w
     assert "20% distracted" in page and "Nothing recorded" in page  # today's bar, and yesterday's empty one
     assert 'href="#sw-' in page and 'id="sw-' in page  # a mark on the timeline jumps to its switch
     older = admin.get(f"/dashboard/day/{(datetime.now(timezone.utc) - timedelta(days=2)).strftime('%Y-%m-%d')}").get_data(as_text=True)
-    assert bars(older) == 3 and ">Today</a>" in older  # an earlier day has the same graph and a way back
+    assert bars(older) == 3 and 'aria-label="Later day"' in older  # an earlier day has the same graph and the way forward
     upload_sprint(c, mac, session_id(days_ago=40, tail="old111"), days_ago=40)
     page = admin.get("/dashboard").get_data(as_text=True)
-    assert bars(page) == 28 and "Last four weeks" in page
+    assert bars(page) == 28 and "Four weeks, day by day" in page and "Since " not in page
 
 
 def test_an_unexpected_failure_gets_a_plain_page_with_a_reference(w):
@@ -834,3 +842,46 @@ def test_an_unexpected_failure_gets_a_plain_page_with_a_reference(w):
                                      "memberId": w.me("mum@example.com"), "startedAt": "not a date"})
     reply = admin.get("/dashboard?who=me")
     assert reply.status_code == 500 and "Something went wrong on our side" in reply.get_data(as_text=True)
+
+
+def test_the_timeline_is_one_bar_of_consecutive_segments_and_the_summary_adds_up(w):
+    admin = w.household("mum@example.com")
+    mac = w.pair(admin, w.add_kid(admin, "Mia"), name="Mia's Mac")
+    c = w.browser()
+    base = datetime.now(timezone.utc).replace(hour=18, minute=0, second=0, microsecond=0)
+    at = lambda minutes: (base + timedelta(minutes=minutes)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    def event(sid, n, start, minutes, host, category):
+        return c.post(f"/api/upload/{sid}/e{n}.json", headers=mac, json={
+            "_id": f"{sid}-e{n}", "sprintId": sid, "startedAt": at(start), "endedAt": at(start + minutes), "durationSeconds": minutes * 60.0,
+            "category": category, "appName": "Safari", "bundleId": "com.apple.Safari", "title": "", "host": host, "url": f"https://{host}", "media": []})
+    # A sprint from 0 to 60 minutes with one off-task visit, then time outside sprints with two distractions.
+    sprint = base.strftime("%Y%m%d-%H%M%S-") + "spr111"
+    c.post(f"/api/upload/{sprint}/start.json", headers=mac, json={"_id": sprint, "task": "Essay", "plannedSeconds": 3600, "startedAt": at(0),
+           "allowedApps": [], "allowedBundleIds": [], "allowedDomains": [], "captureMode": "screenshot"})
+    assert event(sprint, 1, 10, 5, "youtube.com", "offTask").status_code == 200
+    c.post(f"/api/upload/{sprint}/end.json", headers=mac, json={"_id": sprint, "endedAt": at(60), "status": "completed",
+           "focusedSeconds": 3300.0, "awaySeconds": 300.0, "switchCount": 1})
+    later = (base + timedelta(minutes=90)).strftime("%Y%m%d-%H%M%S-") + "amb222"
+    c.post(f"/api/upload/{later}/start.json", headers=mac, json={"_id": later, "task": "All day", "plannedSeconds": 43200, "startedAt": at(90),
+           "allowedApps": [], "allowedBundleIds": [], "allowedDomains": [], "captureMode": "screenshot", "kind": "ambient"})
+    assert event(later, 1, 100, 20, "youtube.com", "distraction").status_code == 200
+    assert event(later, 2, 130, 10, "espn.com", "distraction").status_code == 200
+    c.post(f"/api/upload/{later}/end.json", headers=mac, json={"_id": later, "endedAt": at(150), "status": "completed",
+           "focusedSeconds": 1800.0, "awaySeconds": 1800.0, "switchCount": 2, "activeSeconds": 3600.0})
+    day = (base.astimezone(ZoneInfo("America/Los_Angeles"))).strftime("%Y-%m-%d")
+    page = admin.get(f"/dashboard/day/{day}?view=summary").get_data(as_text=True)
+    # The bar: on task, off task, on task, not in use, on task, distraction, on task, distraction, on task (then padding).
+    kinds = re.findall(r'<(?:a|span) class="(on|off|bad|idle)"', page[page.index('class="line"'):page.index('class="hours"')])
+    assert kinds[:9] == ["on", "off", "on", "idle", "on", "bad", "on", "bad", "on"]
+    weights = [float(x) for x in re.findall(r'style="flex:([0-9.]+) 0 0"', page[page.index('class="line"'):page.index('class="hours"')])]
+    assert weights[:9] == [600.0, 300.0, 2700.0, 1800.0, 600.0, 1200.0, 600.0, 600.0, 600.0]  # seconds, consecutive, nothing overlapping
+    assert sum(weights) % 3600 == 0  # the bar runs from one whole hour to another
+    # Summary: one row per site, visits added up, most time first; youtube is 20 min distraction plus 5 min off task.
+    summary = page[page.index('id="sw-summary"'):page.index('id="sw-detailed"')]
+    assert summary.index("youtube.com") < summary.index("espn.com") and "25m 00s" in summary and "10m 00s" in summary
+    assert "2 visits" in summary and "1 during a sprint" in summary and "20m 00s distraction and 5m 00s off task" in summary
+    assert 'id="sw-summary" style="padding:26px 26px 12px" >' in page and 'id="sw-detailed" class="page" hidden' in page
+    detailed = admin.get(f"/dashboard/day/{day}").get_data(as_text=True)  # opens on Detailed
+    assert 'id="sw-detailed" class="page" >' in detailed and "Off task during a sprint" in detailed
+    # The one summary card: 35 minutes away of 2 hours tracked.
+    assert "35m 00s away" in detailed and "of 2h 00m tracked" in detailed and "29<small>%</small>" in detailed

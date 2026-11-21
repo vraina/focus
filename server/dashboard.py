@@ -46,16 +46,15 @@ def register(app, svc, keep_days: int = 14):
     # --- Whose records are on the page --------------------------------------------------------
 
     def groups() -> list[dict]:
-        """The choices offered at the top of a page. Kids are grouped (admins usually want the household's
-        kids together); an adult's own records are always a separate choice, never mixed in with the kids."""
+        """The people offered at the top of a page. The page always shows one person: each kid an admin can
+        see, then the signed-in adult's own records. The first is the default, so an admin with kids lands on
+        a kid, and anyone else on themselves. (There used to be an "All kids" choice; a link that still asks
+        for it simply gets the default.)"""
         mine = request.account["memberId"]
-        kids = [m for m in request.visible if m.get("kind") == "kid"]
-        out = []
-        if len(kids) > 1:
-            out.append({"key": "kids", "label": "All kids", "ids": [k["_id"] for k in kids]})
-        out += [{"key": k["_id"], "label": k.get("name", "Kid"), "ids": [k["_id"]]} for k in kids]
+        kids = sorted((m for m in request.visible if m.get("kind") == "kid"), key=lambda m: m.get("name", "").lower())
+        out = [{"key": k["_id"], "label": k.get("name", "Kid"), "ids": [k["_id"]], "title": f"{k.get('name', 'Kid')}'s day"} for k in kids]
         if any(m["_id"] == mine for m in request.visible):
-            out.append({"key": "me", "label": "Me", "ids": [mine]})
+            out.append({"key": "me", "label": "Me", "ids": [mine], "title": "My day"})
         return out
 
     def chosen() -> dict:
@@ -174,38 +173,107 @@ def register(app, svc, keep_days: int = 14):
         for d in days:
             d["height"] = round(d["percent"] / top * 100, 1) if d["tracked"] else 0
         return {"days": days, "top": top, "recorded": earliest is not None, "since": began.strftime("%-d %B"),
-                "partial": len(days) < 28}
+                "partial": len(days) < 28, "calendar": calendar(today, {d["key"]: d for d in days}, selected)}
+
+    def calendar(today: datetime, known: dict, selected: str) -> dict:
+        """A month grid for the Calendar button. Only the last 14 days can be chosen; each has a dot coloured
+        by how distracted the day was. Older days are reached from the four-week graph."""
+        oldest = today - timedelta(days=13)
+        first = oldest - timedelta(days=oldest.weekday())         # the Monday on or before the oldest day
+        last = today + timedelta(days=6 - today.weekday())        # the Sunday on or after today
+        cells = []
+        d = first
+        while d <= last:
+            key = d.strftime("%Y-%m-%d")
+            info = known.get(key)
+            open_day = oldest <= d <= today
+            cells.append({"key": key, "n": d.day, "label": d.strftime("%A %-d %B") + (": " + info["summary"] if info else ""),
+                          "open": open_day, "selected": key == selected,
+                          "dot": (info["level"] if info and info["tracked"] else "") if open_day else ""})
+            d += timedelta(days=1)
+        title = today.strftime("%B %Y") if oldest.month == today.month else f"{oldest.strftime('%b')} – {today.strftime('%b %Y')}"
+        return {"title": title, "cells": cells}
 
     def day_timeline(sessions: list[dict], start: datetime) -> dict | None:
-        """The day as one strip: when the Mac was in use, where the sprints were, and every switch away."""
+        """The day as ONE continuous bar, cut into consecutive segments of four kinds: on task, distraction,
+        off task during a sprint, and Mac not in use. Sprints are not drawn; they only decide whether a
+        switch away counts as off task."""
         if not sessions:
             return None
-        spans = [(local(x["start"]), local(x["until"]), x) for x in sessions]
-        lo = min(a for a, _, _ in spans).replace(minute=0, second=0, microsecond=0)
-        hi = max(b for _, b, _ in spans)
-        hi = (hi.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)) if hi > hi.replace(minute=0, second=0, microsecond=0) else hi
+        spans = [(local(x["start"]), local(x["until"])) for x in sessions]
+        lo = min(a for a, _ in spans).replace(minute=0, second=0, microsecond=0)
+        hi = max(b for _, b in spans)
+        if hi > hi.replace(minute=0, second=0, microsecond=0):
+            hi = hi.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
         lo, hi = max(lo, start), min(max(hi, lo + timedelta(hours=1)), start + timedelta(days=1))
-        if hi - lo < timedelta(hours=4):  # a short day still gets a readable strip
+        if hi - lo < timedelta(hours=4):  # a short day still gets a readable bar
             hi = min(lo + timedelta(hours=4), start + timedelta(days=1))
             lo = min(lo, hi - timedelta(hours=4))
-        total = (hi - lo).total_seconds()
-        place = lambda a, b, least=0.0: (round(max(0.0, (a - lo).total_seconds()) / total * 100, 3),
-                                         round(max(least, (min(b, hi) - max(a, lo)).total_seconds() / total * 100), 3))
-        bands, marks = [], []
-        for a, b, x in sorted(spans, key=lambda item: item[0]):
-            left, width = place(a, b, 0.3)
-            bands.append({"left": left, "width": width, "sprint": not x["ambient"],
-                          "label": (f"Sprint: {x['task']}" if not x["ambient"] else "Mac in use, outside sprints")
-                                   + f" · {a.strftime('%-I:%M %p')} to {b.strftime('%-I:%M %p')}"})
+        # Paint the kinds over each other, most telling last: in use, then off task, then distraction.
+        layers = [("on", a, b, None) for a, b in spans]
+        for x in sessions:
             for e in x["events"]:
-                left, width = place(local(e["startedAt"]), local(e["endedAt"]), 0.35)
-                marks.append({"left": left, "width": width, "bad": e.get("category") == "distraction", "id": e["_id"],
-                              "label": f"{e.get('host') or e.get('appName', '')} · {clock(e['startedAt'])} · away {duration(e.get('durationSeconds', 0))}"})
+                kind = "bad" if e.get("category") == "distraction" else "off"
+                layers.append((kind, local(e["startedAt"]), local(e["endedAt"]), e))
+        rank = {"idle": 0, "on": 1, "off": 2, "bad": 3}
+        cuts = sorted({lo, hi} | {min(max(t, lo), hi) for _, a, b, _ in layers for t in (a, b)})
+        segments = []
+        for a, b in zip(cuts, cuts[1:]):
+            if b <= a:
+                continue
+            middle = a + (b - a) / 2
+            kind, event = "idle", None
+            for k, s0, s1, e in layers:
+                if s0 <= middle < s1 and rank[k] > rank[kind]:
+                    kind, event = k, e
+            seconds = (b - a).total_seconds()
+            if segments and segments[-1]["kind"] == kind and segments[-1]["id"] == (event or {}).get("_id"):
+                segments[-1]["seconds"] += seconds
+                segments[-1]["until"] = b
+                continue
+            segments.append({"kind": kind, "seconds": seconds, "from": a, "until": b, "id": (event or {}).get("_id"),
+                             "site": (event or {}).get("host") or (event or {}).get("appName", "")})
+        words = {"on": "On task", "bad": "Distraction", "off": "Off task during a sprint", "idle": "Mac not in use"}
+        for g in segments:
+            span = f"{g['from'].strftime('%-I:%M %p').lower()} to {g['until'].strftime('%-I:%M %p').lower()}"
+            g["label"] = (f"{g['site']} · " if g["site"] else "") + f"{words[g['kind']]} · {span} · {duration(g['seconds'])}"
+            g["weight"] = round(g["seconds"], 1)
+        count = lambda k: sum(1 for g in segments if g["kind"] == k)
+        total = (hi - lo).total_seconds()
         hours = int(total // 3600)
-        step = 1 if hours <= 8 else (2 if hours <= 16 else 3)
-        ticks = [{"left": round(h / hours * 100, 3), "label": (lo + timedelta(hours=h)).strftime("%-I %p").lower()}
-                 for h in range(0, hours + 1, step)]
-        return {"bands": bands, "marks": marks, "ticks": ticks}
+        step = 1 if hours <= 10 else (2 if hours <= 18 else 3)
+        ticks = []
+        for h in range(0, hours + 1, step):
+            at = lo + timedelta(hours=h)
+            edge = h == 0 or h + step > hours
+            ticks.append({"left": round(h / hours * 100, 3),
+                          "label": at.strftime("%-I:%M %p").lower() if edge else at.strftime("%-I %p" if at.hour in (0, 12) else "%-I").lower()})
+        return {"segments": segments, "ticks": ticks,
+                "summary": f"The day as one line: {count('bad')} distraction{'s' if count('bad') != 1 else ''}, "
+                           f"{count('off')} off task during a sprint, and the rest on task or with the Mac not in use"}
+
+    def switch_totals(switches: list[dict]) -> list[dict]:
+        """Every switch away added up per app or website, most time first."""
+        by_site: dict[str, dict] = {}
+        for e in sorted(switches, key=lambda x: x["sort"]):
+            t = by_site.setdefault(e["site"], {"site": e["site"], "visits": 0, "bad": 0.0, "off": 0.0, "times": [], "in_sprint": 0})
+            t["visits"] += 1
+            t["bad" if e["category"] == "distraction" else "off"] += e["seconds"]
+            t["times"].append(e["started_short"])
+            t["in_sprint"] += 1 if e["during"] else 0
+        rows = sorted(by_site.values(), key=lambda t: t["bad"] + t["off"], reverse=True)
+        longest = max((t["bad"] + t["off"] for t in rows), default=0) or 1
+        for t in rows:
+            total = t["bad"] + t["off"]
+            t["total"], t["total_text"] = total, duration(total)
+            t["bad_width"], t["off_width"] = round(t["bad"] / longest * 100, 1), round(t["off"] / longest * 100, 1)
+            when = t["times"][0] if t["visits"] == 1 else (" and ".join(t["times"]) if t["visits"] == 2 else f"first at {t['times'][0]}")
+            sprint = "" if not t["in_sprint"] else (" · during a sprint" if t["in_sprint"] == t["visits"] else f" · {t['in_sprint']} during a sprint")
+            t["meta"] = f"{t['visits']} visit{'s' if t['visits'] != 1 else ''} · {when}{sprint}"
+            parts = [f"{duration(t['bad'])} distraction"] if t["bad"] else []
+            parts += [f"{duration(t['off'])} off task"] if t["off"] else []
+            t["label"] = f"{t['site']}: {t['total_text']} in all, " + " and ".join(parts)
+        return rows
 
     @app.get("/dashboard/day/<day>")
     @signed_in
@@ -227,6 +295,8 @@ def register(app, svc, keep_days: int = 14):
                     "id": e["_id"], "site": e.get("host") or e.get("appName", ""), "is_site": bool(e.get("host")),
                     "detail": " · ".join(x for x in ((e.get("appName") if e.get("host") else ""), e.get("title", "")) if x),
                     "category": e.get("category", "offTask"), "started": clock(e["startedAt"]), "ended": clock(e["endedAt"]),
+                    "started_short": local(e["startedAt"]).strftime("%-I:%M %p").lower(), "ended_short": local(e["endedAt"]).strftime("%-I:%M %p").lower(),
+                    "seconds": float(e.get("durationSeconds", 0)),
                     "away": duration(e.get("durationSeconds", 0)), "sort": e["startedAt"],
                     "during": "" if s["ambient"] else s["task"],
                     "who": s["who"] if several else "",  # only worth showing when more than one person or computer is in view
@@ -240,13 +310,21 @@ def register(app, svc, keep_days: int = 14):
         for r in requests_today:
             r["decisionLabel"] = DECISION_LABEL.get(r.get("decision"), "")
         is_today = day == datetime.now(zone()).strftime("%Y-%m-%d")
+        sums = totals(sessions)
+        sums["word"] = {"good": "Hardly at all", "warn": "A little", "bad": "A lot"}[sums["level"]] if sums["tracked"] else "Nothing tracked"
+        sums["ticks"] = round(min(1.0, sums["away"] / sums["tracked"]) * 40) if sums["tracked"] else 0  # of 40 marks
+        show = "summary" if request.args.get("view") == "summary" else "detailed"
         return render_template(
-            "day.html", day=day, title=start.strftime("%A %-d %B %Y"), totals=totals(sessions), view=view, several=several,
+            "day.html", day=day, title=start.strftime("%A %-d %B %Y"), date_label=start.strftime("%A %-d %B"),
+            date_short=start.strftime("%a %-d %B"), totals=sums, view=view, several=several, show=show,
+            switch_totals=switch_totals(switches),
             is_today=is_today, weeks=four_weeks(view, day), timeline=day_timeline(sessions, start),
             pictures_gone=pictures_gone, keep_days=keep_days,
             previous=(start - timedelta(days=1)).strftime("%Y-%m-%d"),
             following=(start + timedelta(days=1)).strftime("%Y-%m-%d") if start + timedelta(days=1) <= datetime.now(zone()) else None,
-            sprints=[dict(s, clock=local(s["start"]).strftime("%-I:%M %p")) for s in sessions if not s["ambient"]],
+            sprints=[dict(s, clock=local(s["start"]).strftime("%-I:%M %p"),
+                          span=f"{local(s['start']).strftime('%-I:%M')} – {local(s['until']).strftime('%-I:%M %p').lower()}")
+                     for s in sessions if not s["ambient"]],
             switches=switches, requests=requests_today,
             search_counts={k: sum(1 for x in day_searches if x["label"] == k) for k in ("work", "distraction", "personal")},
             searches=[x for x in day_searches if x["label"] == "distraction"])
