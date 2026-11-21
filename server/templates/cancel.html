@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% set active = 'admin' %}
+{% block title %}Cancel a household · YoungWonks Focus{% endblock %}
+{% block body %}
+<div class="narrow"><div class="card" style="padding:26px">
+  <h1 style="font-size:22px">Cancel the household of {{ email }}?</h1>
+  <p>This deletes, for good:</p>
+  <ul style="margin:0 0 12px 18px;padding:0">
+    <li>{{ sign_ins }} sign-in{{ '' if sign_ins == 1 else 's' }} and {{ people }} {{ 'person' if people == 1 else 'people' }}</li>
+    <li>the link to {{ computers }} computer{{ '' if computers == 1 else 's' }}</li>
+    <li>every record, picture, request, search and label stored for them</li>
+    <li>the invitation that started the household</li>
+  </ul>
+  <p class="muted">It cannot be undone. Their Macs keep working and keep what they recorded on the Mac itself, but stop sending until they are linked to a household again. To let this person back in, create a new invitation afterwards.</p>
+  {% if error %}<p role="alert" style="color:var(--badtext);font-weight:650">{{ error }}</p>{% endif %}
+  <form method="post">
+    <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+    <label class="small muted" for="confirm">Type the household's email to confirm</label>
+    <input class="field" id="confirm" name="confirm" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="{{ email }}">
+    <div class="row" style="margin-top:14px">
+      <button class="btn" style="background:var(--bad);color:#fff">Cancel this household</button>
+      <a href="{{ url_for('admin') }}">Keep it</a>
+    </div>
+  </form>
+</div></div>
+{% endblock %}

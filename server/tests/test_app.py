@@ -237,6 +237,54 @@ def test_only_the_service_owner_invites_households_and_sees_no_records(w):
     assert "secret-site" not in owner.get(f"/dashboard/day/{today()}").get_data(as_text=True)
 
 
+def test_the_owner_can_revoke_an_unused_invitation_and_cancel_a_household(w):
+    owner, _ = w.sign_in()
+    code = w.invite()
+    page = owner.get("/dashboard/admin").get_data(as_text=True)
+    assert code in page and "Revoke" in page
+    token = lambda path="/dashboard/admin": w.csrf(owner, path)
+    assert owner.post("/dashboard/admin", data={"csrf": token(), "action": "revoke", "code": code}).status_code == 302
+    assert w.db["invites"].find_one({"_id": code}) is None
+    client = w.browser()  # the revoked code no longer starts a household
+    refused = client.post("/signup", data={"csrf": w.csrf(client, "/signup"), "invite": code, "name": "X",
+                                           "email": "late@example.com", "password": "family-password-1"})
+    assert refused.status_code == 400 and w.db["accounts"].find_one({"email": "late@example.com"}) is None
+
+    # Two households with records. Cancelling one removes all of it and none of the other's.
+    dad, mum = w.household("dad@example.com"), w.household("mum@example.com")
+    used = w.db["invites"].find_one({"usedBy": "dad@example.com"})["_id"]
+    kid = w.add_kid(dad, "Mia")
+    upload_sprint(w.browser(), w.pair(dad, kid), session_id(), site="dads-site.example.com")
+    other_sid = session_id(tail="mum001")
+    upload_sprint(w.browser(), w.pair(mum, w.add_kid(mum, "Leo")), other_sid, site="mums-site.example.com")
+    fid = w.db["accounts"].find_one({"email": "dad@example.com"})["familyId"]
+    # A used invitation is not revoked on its own.
+    owner.post("/dashboard/admin", data={"csrf": token(), "action": "revoke", "code": used})
+    assert w.db["invites"].find_one({"_id": used}) is not None
+
+    assert dad.get(f"/dashboard/admin/cancel/{fid}").status_code == 404  # only the owner
+    mine = w.db["accounts"].find_one({"email": OWNER})["familyId"]
+    assert owner.get(f"/dashboard/admin/cancel/{mine}").status_code == 404  # never the owner's own
+    ask = owner.get(f"/dashboard/admin/cancel/{fid}").get_data(as_text=True)
+    assert "dad@example.com" in ask and "2 people" in ask and "1 computer" in ask and "dads-site" not in ask
+    path = f"/dashboard/admin/cancel/{fid}"
+    wrong = owner.post(path, data={"csrf": token(path), "confirm": "mum@example.com"})
+    assert wrong.status_code == 400 and w.db["families"].find_one({"_id": fid}) is not None
+    assert owner.post(path, data={"csrf": token(path), "confirm": "Dad@Example.com "}).status_code == 302
+
+    for name in ("accounts", "members", "devices", "events", "media", "sprintStarts", "sprintEnds", "sites", "pairings"):
+        assert w.db[name].count_documents({"familyId": fid}) == 0, name
+    assert w.db["families"].find_one({"_id": fid}) is None and w.db["invites"].find_one({"_id": used}) is None
+    assert w.db["sites"].count_documents({"scope": f"k:{fid}"}) == 0
+    assert w.db["sprintStarts"].find_one({"_id": other_sid}) is not None  # the other household is untouched
+    assert "mums-site" in mum.get(f"/dashboard/day/{today()}").get_data(as_text=True)
+    assert dad.get("/dashboard").status_code == 302  # their sign-in is gone
+    after = owner.get("/dashboard/admin").get_data(as_text=True)
+    assert "dad@example.com" not in after and "mum@example.com" in after
+    # The same person can start again with a new invitation.
+    w.join(w.invite(), "dad@example.com")
+
+
 # --- Roles: admin, co-admin, kids and other adults ------------------------------------------------------
 
 def test_an_adults_records_are_private_even_from_admins(w):

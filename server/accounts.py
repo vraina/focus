@@ -815,13 +815,26 @@ def register(app, svc):
 
     # --- The service owner: inviting new households -----------------------------------------------
 
+    #: Everything a household owns, by collection. Cancelling a household removes all of it.
+    HOUSEHOLD_COLLECTIONS = ("accounts", "members", "devices", "memberInvites", "pairings", "apps", "sites", "events", "media",
+                             "requests", "searches", "sprintStarts", "sprintEnds", "usage", "digests")
+
+    def owner_only():
+        if not request.family.get("serviceOwner") or request.account["role"] != "admin":
+            abort(404)
+
     @app.route("/dashboard/admin", methods=["GET", "POST"])
     @signed_in
     def admin():
-        if not request.family.get("serviceOwner") or request.account["role"] != "admin":
-            abort(404)
+        owner_only()
         if request.method == "POST":
             check_csrf()
+            if request.form.get("action") == "revoke":
+                # Only an invitation nobody has used can be revoked. A used one has a household behind it,
+                # which is cancelled as a whole further down the page.
+                code = re.sub(r"[^A-Z0-9]", "", request.form.get("code", "").upper())
+                gone = db["invites"].delete_one({"_id": code, "usedBy": None}).deleted_count
+                return redirect(url_for("admin", done="revoked" if gone else "kept"))
             code = "".join(secrets.choice(PAIRING_ALPHABET) for _ in range(10))
             db["invites"].insert_one({"_id": code, "usedBy": None, "createdAt": utcnow(),
                                       "note": " ".join(request.form.get("note", "").split())[:80]})
@@ -829,13 +842,48 @@ def register(app, svc):
         computers_by = {row["_id"]: row["n"] for row in devices.aggregate([{"$match": {"revoked": {"$ne": True}}},
                                                                            {"$group": {"_id": "$familyId", "n": {"$sum": 1}}}])}
         people_by = {row["_id"]: row["n"] for row in members.aggregate([{"$group": {"_id": "$familyId", "n": {"$sum": 1}}}])}
+        notes = {"revoked": "The invitation was revoked. Its code no longer works.",
+                 "kept": "That invitation has already been used, so it was not revoked. Cancel the household instead.",
+                 "cancelled": "The household was cancelled and everything it had stored was deleted."}
         # The owner can see that a household exists and how big it is. Never what anyone in it recorded.
         return render_template("admin.html",
                                invites=list(db["invites"].find({}).sort("createdAt", -1).limit(200)),
-                               households=[{"email": a["email"], "created": a.get("createdAt", "")[:10], "verified": a.get("verified"),
+                               households=[{"id": a["familyId"], "email": a["email"], "created": a.get("createdAt", "")[:10],
+                                            "verified": a.get("verified"), "mine": a["familyId"] == request.family["_id"],
                                             "people": people_by.get(a["familyId"], 0), "computers": computers_by.get(a["familyId"], 0)}
                                            for a in accounts.find({"role": "admin"}).sort("createdAt", -1).limit(500)],
-                               signup_url=f"{svc.public_url}{url_for('signup')}")
+                               signup_url=f"{svc.public_url}{url_for('signup')}", message=notes.get(request.args.get("done", "")))
+
+    @app.route("/dashboard/admin/cancel/<fid>", methods=["GET", "POST"])
+    @signed_in
+    def cancel_household(fid):
+        """Deletes a household and everything stored for it. The owner confirms by typing its admin's email."""
+        owner_only()
+        family = families.find_one({"_id": fid})
+        head = accounts.find_one({"familyId": fid, "role": "admin"})
+        if not family or not head or family.get("serviceOwner") or fid == request.family["_id"]:
+            abort(404)  # the owner's own household cannot be cancelled from here
+        error = None
+        if request.method == "POST":
+            check_csrf()
+            if request.form.get("confirm", "").strip().lower() != head["email"]:
+                error = "That does not match the household's email, so nothing was deleted."
+            else:
+                emails = [a["email"] for a in accounts.find({"familyId": fid})]
+                people = [m["_id"] for m in members.find({"familyId": fid})]
+                for name in HOUSEHOLD_COLLECTIONS:
+                    db[name].delete_many({"$or": [{"familyId": fid}, {"memberId": {"$in": people}}]})
+                for scope in [f"k:{fid}"] + [f"m:{mid}" for mid in people]:
+                    db["apps"].delete_many({"scope": scope})
+                    db["sites"].delete_many({"scope": scope})
+                # The invitation that started it goes too, so the list shows only what is live.
+                db["invites"].delete_many({"usedBy": {"$in": emails}})
+                families.delete_one({"_id": fid})
+                return redirect(url_for("admin", done="cancelled"))
+        return render_template("cancel.html", email=head["email"], error=error,
+                               people=members.count_documents({"familyId": fid}),
+                               computers=devices.count_documents({"familyId": fid, "revoked": {"$ne": True}}),
+                               sign_ins=accounts.count_documents({"familyId": fid})), (400 if error else 200)
 
     # --- Overruling a website's label (linked from the summary email and the Websites page) --------
 

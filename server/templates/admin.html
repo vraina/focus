@@ -3,6 +3,7 @@
 {% block title %}Households · YoungWonks Focus{% endblock %}
 {% block body %}
 <h1>Households</h1>
+{% if message %}<div class="card" role="status" style="margin-bottom:14px">{{ message }}</div>{% endif %}
 <p class="muted">Someone needs one of these codes to start a new household at <b>{{ signup_url }}</b>. Each code works once.</p>
 <form method="post" class="card row">
   <input type="hidden" name="csrf" value="{{ csrf_token() }}">
@@ -15,17 +16,22 @@
   <div class="card row"><span style="font:700 16px ui-monospace,Menlo,monospace;letter-spacing:1px">{{ i._id }}</span>
     <span class="muted small" style="flex:1">{{ i.note }}</span>
     {% if i.usedBy %}<span class="pill">Used by {{ i.usedBy }}</span>{% else %}<span class="pill good">Unused</span>
-      <a class="small" href="{{ signup_url }}?invite={{ i._id }}">Sign-up link</a>{% endif %}</div>
+      <a class="small" href="{{ signup_url }}?invite={{ i._id }}">Sign-up link</a>
+      <form method="post" style="margin:0"><input type="hidden" name="csrf" value="{{ csrf_token() }}">
+        <input type="hidden" name="action" value="revoke"><input type="hidden" name="code" value="{{ i._id }}">
+        <button class="linkbtn" aria-label="Revoke invitation {{ i._id }}">Revoke</button></form>{% endif %}</div>
 {% else %}<div class="card muted">No invitations yet.</div>{% endfor %}
 </div>
 <h2>Existing households</h2>
-<p class="muted small" style="margin-top:-4px">You can see that a household exists and how big it is. You cannot see what anyone in another household records.</p>
+<p class="muted small" style="margin-top:-4px">You can see that a household exists and how big it is. You cannot see what anyone in another household records. An invitation that has been used is withdrawn by cancelling its household.</p>
 <div class="stack">
 {% for h in households %}
   <div class="card row"><b style="flex:1">{{ h.email }}</b><span class="muted small">since {{ h.created }}</span>
     <span class="pill {{ 'good' if h.verified else 'warn' }}">{{ 'Email confirmed' if h.verified else 'Email not confirmed' }}</span>
     <span class="pill">{{ h.people }} {{ 'person' if h.people == 1 else 'people' }}</span>
-    <span class="pill">{{ h.computers }} computer{{ '' if h.computers == 1 else 's' }}</span></div>
+    <span class="pill">{{ h.computers }} computer{{ '' if h.computers == 1 else 's' }}</span>
+    {% if h.mine %}<span class="muted small">Yours</span>{% else %}<a class="small bad" href="{{ url_for('cancel_household', fid=h.id) }}">Cancel household…</a>{% endif %}</div>
 {% endfor %}
 </div>
+<style>.linkbtn{background:none;border:0;padding:0;font:inherit;font-size:13px;font-weight:650;color:var(--badtext);cursor:pointer} .linkbtn:hover{text-decoration:underline} a.bad{color:var(--badtext);font-weight:650}</style>
 {% endblock %}
