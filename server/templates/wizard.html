@@ -68,7 +68,7 @@ main{max-width:1200px;padding:0 32px 48px;font-size:16px}
 .back:hover{text-decoration:none;border-color:var(--brand-line)}
 .skip{display:inline-flex;align-items:center;height:52px;padding:0 18px;font-size:15px;font-weight:600;margin-left:auto}
 .msg{border-radius:14px;padding:12px 16px;font-weight:600} .msg.ok{background:var(--good-tint);color:var(--good)} .msg.err{background:var(--bad-tint);color:var(--badtext)}
-.segs,.narrow-only{display:none}
+.segs,.narrow-only,.inst-phone{display:none}
 .copycode{height:48px;font-size:15px;padding:0 18px}
 .newform{margin-top:6px}
 /* Phones (and anything narrower than the site's usual breakpoint): one column, the task straight on the
@@ -97,14 +97,17 @@ main{max-width:1200px;padding:0 32px 48px;font-size:16px}
   .person{background:var(--surface);border:1px solid var(--line);padding:10px 12px 10px 14px;gap:12px} .person .nm{font-size:17px}
   /* Install and link cards. */
   .two{grid-template-columns:1fr} .choice{background:var(--surface);padding:18px;gap:10px}
+  .inst-desktop{display:none} .choice.inst-phone{display:flex} p.inst-phone{display:block} .inst-phone b{font-size:17px}
+  p.inst-phone a{display:inline-flex;align-items:center;min-height:44px;padding:0 4px}
   .steps li{align-items:flex-start}
   .ask{display:block;font-size:15px} .ask .seg{display:flex;width:100%;margin-top:8px;background:var(--surface)} .ask .seg a{flex:1;justify-content:center;padding:0 8px}
   .linkrow{flex-direction:column;gap:18px}
   .codebox{flex:none;background:var(--surface);padding:22px;gap:10px;display:grid;grid-template-columns:1fr 1fr;column-gap:8px;justify-items:stretch;text-align:center}
   .codebox>*{grid-column:1/-1} .codeline{display:contents}
-  .thecode{grid-column:1/-1;font-size:clamp(34px,13.4vw,64px);letter-spacing:clamp(1px,1.1vw,5px);text-align:center}
+  /* As large as a real code (eight characters and a dash) can be while staying on one line. */
+  .thecode{grid-column:1/-1;font-size:clamp(30px,11.6vw,64px);letter-spacing:clamp(1px,.8vw,5px);text-align:center}
   .forwho{order:1} .thecode{order:2} .expiry{order:3} .codemail{order:4} .copycode{order:5;grid-column:1!important} .newform{order:5;grid-column:2!important;margin:0}
-  .copycode,.newcode{width:100%;height:48px;justify-content:center;padding:0 8px;font-size:15px;background:transparent;color:var(--ink);border:1px solid var(--line);font-weight:600}
+  .copycode,.newcode{white-space:nowrap;gap:6px;width:100%;height:48px!important;margin:0;justify-content:center;padding:0 8px;font-size:15px;background:transparent;color:var(--ink);border:1px solid var(--line);font-weight:600}
   .onmac{flex:none} .status{align-items:flex-start;padding:14px 16px} .status i{margin-top:6px}
   .tick{width:68px;height:68px}
   /* Finished: a kid with no computer gets a card with a full-width button. */
@@ -112,8 +115,9 @@ main{max-width:1200px;padding:0 32px 48px;font-size:16px}
   /* Actions: the main button first and full width, then Back and Skip side by side. */
   .foot{margin-top:auto;padding-top:10px;gap:8px} .foot .primary{order:0;flex:1 1 100%} .foot .primary .fill,.foot a.fill.primary{width:100%;height:56px;font-size:17px}
   .foot .back,.foot .skip{order:1;flex:1;height:48px;justify-content:center;font-size:15px;margin-left:0;padding:0 8px}
-  .fill{height:54px} .outline{height:54px;font-size:16px;flex:1 1 100%}
+  .fill{height:54px} .outline{flex:none;width:100%;height:54px;font-size:16px}
 }
+@media (max-width:360px){.copycode svg{display:none} .copycode,.newcode{font-size:14px} .task h1{font-size:34px} .task h1.xl{font-size:38px}}
 </style>
 {% endblock %}
 {% block body %}
@@ -188,8 +192,20 @@ main{max-width:1200px;padding:0 32px 48px;font-size:16px}
       <div class="eyebrow">Step 2 of 3</div>
       <h1>Install the app on the Mac</h1>
       {% if download_url %}
-      <p class="lead">The app goes on the Mac your kid uses. Where are you right now?</p>
-      <div class="two">
+      <p class="lead"><span class="wide">The app goes on the Mac your kid uses. Where are you right now?</span><span class="narrow-only">The app goes on the Mac, not on this phone. Send the download link over to it.</span></p>
+      {# A phone is never the Mac, so at phone width there is one card for getting the link across. Width alone
+         cannot tell a phone from a narrow window on the Mac, so the download stays reachable there as a text link. #}
+      <div class="choice main inst-phone">
+        <b>Get the link onto the Mac</b>
+        <form method="post" style="display:contents">
+          <input type="hidden" name="csrf" value="{{ csrf_token() }}"><input type="hidden" name="action" value="email">
+          <button class="fill" title="Sends the link to {{ my_email }}"><svg aria-hidden="true" width="18" height="16" viewBox="0 0 18 16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="1.5" y="2" width="15" height="12" rx="2.5"/><path d="M2 4l7 5 7-5"/></svg>Email it to me</button>
+        </form>
+        <button class="outline" type="button" data-copy="{{ download_url }}" data-copied="Copied">Copy link</button>
+        <span class="fine">The email goes to {{ my_email }}.</span>
+      </div>
+      <p class="fine inst-phone" style="margin:-8px 0 0">On the Mac right now? <a href="{{ download_url }}">Download here</a></p>
+      <div class="two inst-desktop">
         <div class="choice main"><b>I'm on that Mac now</b><p>Download the installer straight to this computer.</p>
           <a class="fill" href="{{ download_url }}"><svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v8M4.5 7L8 10.5 11.5 7M2.5 13.5h11"/></svg>Download for Mac</a></div>
         <div class="choice"><b>The Mac is somewhere else</b><p>Send yourself the download link and open it on that Mac. Setup waits for you here.</p>
@@ -206,7 +222,9 @@ main{max-width:1200px;padding:0 32px 48px;font-size:16px}
         <p>We're still preparing the download. You can leave setup now and come back: a Finish setup button stays at the top of every page.</p></div>
       {% endif %}
       <div class="list"><div class="k">Then, on the Mac</div>
-        <ol class="steps"><li>Sign in to the Mac as an administrator.</li><li>Open the downloaded file and follow the installer.</li><li>Open YoungWonks Focus from Applications and leave it open.</li></ol></div>
+        <ol class="steps"><li><span><span class="wide">Sign in to the Mac as an administrator.</span><span class="narrow-only">Sign in as an administrator.</span></span></li>
+          <li><span><span class="wide">Open the downloaded file and follow the installer.</span><span class="narrow-only">Open the link, then open the downloaded file and follow the installer.</span></span></li>
+          <li>Open YoungWonks Focus from Applications and leave it open.</li></ol></div>
       <div class="foot">
         <a class="back" href="{{ url_for('setup_step', step='kids') }}">Back</a>
         <form method="post" class="primary"><input type="hidden" name="csrf" value="{{ csrf_token() }}"><input type="hidden" name="action" value="installed"><button class="fill">The app is installed</button></form>
