@@ -1,4 +1,5 @@
 import AppKit
+import FocusSprintCore
 
 /// Closing and reopening the app, which macOS requires before a newly granted permission takes effect.
 enum AppRelaunch {
@@ -22,7 +23,22 @@ enum AppRelaunch {
         return true
     }
 
+    /// Set while the app is closing only so that it can come straight back (after a permission change).
+    static var restarting = false
+
+    /// A household admin or co-admin may quit the app and have it stay closed until they open it again.
+    /// The service sends the kids' app list only to them, which is how this Mac knows who they are.
+    /// Everyone else's copy is reopened by the system, as before.
+    static var mayStayClosed: Bool { AppList.load().kids != nil }
+
+    /// Called as the app closes. The system reopens the installed app after any exit that is not a clean
+    /// one, so this ends with an error code unless an admin chose to quit.
+    static func leave() {
+        if startedBySystem, restarting || !mayStayClosed { exit(1) }
+    }
+
     static func now() {
+        restarting = true
         // The installed app is restarted by the system as soon as it exits. Any other copy reopens itself.
         if !startedBySystem {
             var arguments = ["-n", Bundle.main.bundlePath]

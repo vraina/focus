@@ -49,7 +49,9 @@ sudo tee "$AGENT" >/dev/null <<AGENTEOF
     <key>Label</key><string>com.focussprint.app</string>
     <key>ProgramArguments</key><array><string>/Applications/YoungWonks Focus.app/Contents/MacOS/FocusSprint</string></array>
     <key>RunAtLoad</key><true/>
-    <key>KeepAlive</key><true/>
+    <!-- Reopened after anything but a clean exit. The app itself decides: it exits cleanly only when a
+         household admin quits it, and with an error code in every other case, so it comes straight back. -->
+    <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
     <key>LimitLoadToSessionType</key><string>Aqua</string>
     <key>AssociatedBundleIdentifiers</key><string>com.focussprint.app</string>
 </dict>

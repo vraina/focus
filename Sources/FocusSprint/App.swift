@@ -68,6 +68,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         SprintEngine.shared.appIsQuitting()
+        AppRelaunch.leave()
     }
 }
 
