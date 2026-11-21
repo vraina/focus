@@ -7,6 +7,7 @@ import FocusSprintCore
 /// While the student is on a distraction the whole card turns red.
 struct MeterView: View {
     @ObservedObject var engine: SprintEngine
+    @ObservedObject private var beat = SprintEngine.shared.beat
 
     var body: some View {
         let away = engine.awayNow
@@ -133,7 +134,7 @@ final class MeterPanelController {
         answers = engine.$answer.compactMap { $0 }.receive(on: RunLoop.main).sink { reply in
             DisputePrompt.show(reply)
         }
-        watcher = engine.$pulse.sink { [weak self, weak engine] _ in
+        watcher = engine.beat.$count.sink { [weak self, weak engine] _ in
             guard let self, let engine else { return }
             let size = host.fittingSize
             if abs(size.height - self.panel.frame.height) > 0.5 {

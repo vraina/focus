@@ -92,7 +92,7 @@ struct FocusSprintApp: App {
             if engine.phase == .idle {
                 Image(systemName: "timer")
             } else {
-                Text((engine.phase == .onBreak ? "Break " : "") + SprintEngine.clock(engine.clockSeconds)).monospacedDigit()
+                Ticking { Text((engine.phase == .onBreak ? "Break " : "") + SprintEngine.clock(engine.clockSeconds)).monospacedDigit() }
             }
         }
     }
@@ -229,6 +229,7 @@ struct ContentView: View {
 /// Today's distraction at a glance, always visible in the sidebar.
 struct TodayCard: View {
     @EnvironmentObject var engine: SprintEngine
+    @ObservedObject private var beat = SprintEngine.shared.beat
 
     var body: some View {
         let _ = engine.pulse

@@ -165,19 +165,22 @@ struct ArcRing: View {
     var minPoints: CGFloat = 3
 
     var body: some View {
-        GeometryReader { geo in
-            let diameter = max(1, min(geo.size.width, geo.size.height) - lineWidth)
+        // Drawn in one pass: a day with a hundred switches is one drawing, not a hundred layered shapes.
+        Canvas { context, size in
+            let diameter = max(1, min(size.width, size.height) - lineWidth)
+            let center = CGPoint(x: size.width / 2, y: size.height / 2)
             let least = Double(minPoints / (.pi * diameter))
-            ZStack {
-                Circle().stroke(track, lineWidth: lineWidth)
-                ForEach(Array(arcs.enumerated()), id: \.offset) { _, arc in
-                    let span = ArcRing.span(arc, least: least)
-                    Circle().trim(from: span.from, to: span.to)
-                        .stroke(arc.color, style: StrokeStyle(lineWidth: lineWidth, lineCap: .butt))
-                        .rotationEffect(.degrees(-90))
-                }
+            context.stroke(Path(ellipseIn: CGRect(x: center.x - diameter / 2, y: center.y - diameter / 2, width: diameter, height: diameter)),
+                           with: .color(track), lineWidth: lineWidth)
+            for arc in arcs {
+                let span = ArcRing.span(arc, least: least)
+                guard span.to > span.from else { continue }
+                var path = Path()
+                // Starts at the top and runs clockwise.
+                path.addArc(center: center, radius: diameter / 2, startAngle: .degrees(-90 + 360 * span.from),
+                            endAngle: .degrees(-90 + 360 * span.to), clockwise: false)
+                context.stroke(path, with: .color(arc.color), style: StrokeStyle(lineWidth: lineWidth, lineCap: .butt))
             }
-            .padding(lineWidth / 2)
         }
         .aspectRatio(1, contentMode: .fit)
     }
@@ -378,14 +381,34 @@ struct Notice: View {
 }
 
 enum AppIcons {
-    private static var cache: [String: NSImage] = [:]
+    /// Small bitmaps, made once. An app's own icon carries sizes up to 1024 points; drawing that into a
+    /// 22-point slot for every row, on every redraw, is what made long lists slow to scroll.
+    private static var cache: [String: NSImage?] = [:]
 
     static func icon(bundleId: String) -> NSImage? {
         if let hit = cache[bundleId] { return hit }
-        guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId) else { return nil }
-        let image = NSWorkspace.shared.icon(forFile: url.path)
-        cache[bundleId] = image
-        return image
+        var small: NSImage?
+        if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId) {
+            small = shrink(NSWorkspace.shared.icon(forFile: url.path), points: 32)
+        }
+        cache[bundleId] = small // a miss is remembered too, so it is not looked up again on every redraw
+        return small
+    }
+
+    private static func shrink(_ image: NSImage, points: Int) -> NSImage {
+        let pixels = points * 2
+        guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: pixels, pixelsHigh: pixels, bitsPerSample: 8,
+                                         samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB,
+                                         bytesPerRow: 0, bitsPerPixel: 0) else { return image }
+        rep.size = NSSize(width: points, height: points)
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+        NSGraphicsContext.current?.imageInterpolation = .high
+        image.draw(in: NSRect(x: 0, y: 0, width: points, height: points))
+        NSGraphicsContext.restoreGraphicsState()
+        let out = NSImage(size: rep.size)
+        out.addRepresentation(rep)
+        return out
     }
 }
 
@@ -435,4 +458,12 @@ struct BoxButtonStyle: ButtonStyle {
             .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
             .opacity(configuration.isPressed ? 0.7 : 1)
     }
+}
+
+/// Redraws what is inside it twice a second, with the engine's beat. Everything that shows a live clock or
+/// counter sits in one of these, so the rest of a screen stays still between real changes.
+struct Ticking<Content: View>: View {
+    @ObservedObject private var beat = SprintEngine.shared.beat
+    @ViewBuilder var content: () -> Content
+    var body: some View { content() }
 }

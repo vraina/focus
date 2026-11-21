@@ -261,8 +261,7 @@ struct SprintDetail: View {
                 }
                 .card(padding: 16)
 
-                if let live = liveVisit {
-                    let _ = engine.pulse
+                Ticking { if let live = liveVisit {
                     HStack(spacing: 12) {
                         VStack(alignment: .leading, spacing: 1) {
                             Text("Happening now: \(live.label)").font(.system(size: 14, weight: .bold))
@@ -274,7 +273,7 @@ struct SprintDetail: View {
                     .foregroundStyle(.white)
                     .padding(.horizontal, 16).padding(.vertical, 12)
                     .background(Theme.badFill, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-                }
+                } }
 
                 if !ownSearches.isEmpty { SearchCard(entries: ownSearches) }
 
@@ -369,20 +368,19 @@ struct TimelineBar: View {
     var showsGaps = false
 
     var body: some View {
+        let arcs = shape.arcs
         VStack(alignment: .leading, spacing: 8) {
-            GeometryReader { geo in
-                ZStack(alignment: .leading) {
-                    Theme.track
-                    ForEach(Array(shape.arcs.enumerated()), id: \.offset) { _, arc in
-                        // The same least width as the circles, so a very short switch still shows.
-                        let span = ArcRing.span(arc, least: Double(2 / max(1, geo.size.width)))
-                        Rectangle().fill(arc.color)
-                            .frame(width: geo.size.width * (span.to - span.from))
-                            .offset(x: geo.size.width * span.from)
-                    }
+            // One drawing for the whole bar, however many visits the day had.
+            Canvas { context, size in
+                context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(Theme.track))
+                for arc in arcs {
+                    // The same least width as the circles, so a very short switch still shows.
+                    let span = ArcRing.span(arc, least: Double(2 / max(1, size.width)))
+                    context.fill(Path(CGRect(x: size.width * span.from, y: 0, width: size.width * (span.to - span.from), height: size.height)),
+                                 with: .color(arc.color))
                 }
-                .clipShape(PillShape())
             }
+            .clipShape(PillShape())
             .frame(height: 22)
             .accessibilityElement()
             .accessibilityLabel("The record as one bar: on task in green, visits away in red and amber")

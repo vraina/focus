@@ -58,8 +58,8 @@ struct SprintView: View {
                     switch engine.phase {
                     case .idle:
                         if let summary = engine.lastSummary { finished(summary) } else { setup }
-                    case .running: live
-                    case .onBreak: onBreak
+                    case .running: Ticking { live }
+                    case .onBreak: Ticking { onBreak }
                     }
                 }
                 .padding(EdgeInsets(top: 44, leading: 30, bottom: 16, trailing: 30))

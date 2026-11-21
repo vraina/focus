@@ -9,6 +9,7 @@ struct AppsView: View {
     var sample: AppList?
     @State private var status = HelperStatus.load()
     @State private var lists = AppList.load()
+    @State private var listsData: Data?
     @State private var showKids = false
     /// Changes made here that the service has not confirmed yet: "kids|bundle" or "mine|bundle" -> label.
     @State private var pending: [String: String] = [:]
@@ -144,8 +145,14 @@ struct AppsView: View {
     }
 
     private func reload() {
-        status = HelperStatus.load()
-        lists = AppList.load()
+        // Assigning redraws the whole list, so only do it when what is on disk has changed.
+        let linked = HelperStatus.load()
+        if linked?.linked != status?.linked { status = linked }
+        let fresh = AppList.load()
+        if (try? JSONEncoder().encode(fresh)) != listsData {
+            listsData = try? JSONEncoder().encode(fresh)
+            lists = fresh
+        }
         guard !pending.isEmpty else { return }
         // A change is settled once the lists from the service show it. One that is still not there after a
         // while was not accepted (or the Mac is offline): stop pretending and show what the service has.

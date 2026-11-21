@@ -33,8 +33,12 @@ final class SprintEngine: ObservableObject {
     enum Phase { case idle, running, onBreak }
 
     @Published private(set) var phase: Phase = .idle
-    /// Bumped twice a second so the timer, live counters and floating meter redraw.
-    @Published private(set) var pulse = 0
+    /// Bumped twice a second so the timer, live counters and floating meter redraw. It is announced on its
+    /// own object: only the small pieces that show live numbers watch it (see `Ticking`), so a whole screen
+    /// is not redrawn twice a second while it is being scrolled.
+    final class Beat: ObservableObject { @Published fileprivate(set) var count = 0 }
+    let beat = Beat()
+    var pulse: Int { beat.count }
     /// Goes up each time a finished visit has been written to disk, so History can refresh at once.
     @Published private(set) var savedVisits = 0
     /// The screen is checked four times a second; the windows redraw on every second check.
@@ -415,7 +419,7 @@ final class SprintEngine: ObservableObject {
                                                      SprintVisit(from: 1200, to: 1218, distraction: false)])
             }
         }
-        pulse &+= 1
+        beat.count &+= 1
     }
     #endif
 
@@ -462,7 +466,7 @@ final class SprintEngine: ObservableObject {
             observeAmbient(step: step)
         }
         // Redraw at once when the state flips, so the widget reacts within a quarter of a second.
-        if ticks % 2 == 0 || awayNow?.label != wasAway { pulse &+= 1 }
+        if ticks % 2 == 0 || awayNow?.label != wasAway { beat.count &+= 1 }
     }
 
     // MARK: All-day tracking (outside sprints)
