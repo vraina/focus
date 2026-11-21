@@ -16,35 +16,39 @@ struct HistoryView: View {
     @State private var message: String?
     @State private var syncing = false
     @State private var fingerprint = 0
+    /// When the Mac was being tracked on each day (sprints and all-day stretches), for the all-day circle and bar.
+    @State private var tracked: [Date: [DateInterval]] = [:]
     private let refreshTimer = Ticker.every3
 
     var body: some View {
         HStack(spacing: 0) {
             VStack(spacing: 10) {
-                if let message { Text(message).font(.system(size: 11)).foregroundStyle(.secondary) }
+                if let message { Text(message).font(.system(size: 11)).foregroundStyle(Theme.soft) }
                 ScrollView {
                     LazyVStack(spacing: 6) {
                         ForEach(records) { record in
-                            SprintRow(record: record, selected: record.id == selection)
-                                .onTapGesture { selection = record.id }
+                            Button { selection = record.id } label: {
+                                SprintRow(record: record, shape: RecordShape(record, tracked: tracked), selected: record.id == selection)
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityAddTraits(record.id == selection ? .isSelected : [])
                         }
                     }
                 }
             }
-            .padding(12)
-            .frame(width: 280)
+            .padding(EdgeInsets(top: 44, leading: 10, bottom: 12, trailing: 10))
+            .frame(width: 256)
 
             Rectangle().fill(Theme.hairline).frame(width: 1)
 
             Group {
                 if let record = records.first(where: { $0.id == selection }) {
-                    SprintDetail(record: record, source: source, sites: sites, searches: searches)
+                    SprintDetail(record: record, shape: RecordShape(record, tracked: tracked), source: source, sites: sites, searches: searches)
                 } else {
-                    VStack(spacing: 10) {
-                        Image(systemName: "chart.bar.xaxis").font(.system(size: 38)).foregroundStyle(.tertiary)
-                        Text(records.isEmpty ? "No sprints yet" : "Select a sprint").font(Theme.title(17))
+                    VStack(spacing: 8) {
+                        Text(records.isEmpty ? "No sprints yet" : "Select a sprint").font(Theme.title(22)).foregroundStyle(Theme.ink)
                         if records.isEmpty {
-                            Text("Finish a sprint and it shows up here.").font(.system(size: 13)).foregroundStyle(.secondary)
+                            Text("Finish a sprint and it shows up here.").font(.system(size: 14)).foregroundStyle(Theme.soft)
                         }
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -80,8 +84,16 @@ struct HistoryView: View {
                 let current = hasher.finalize()
                 guard current != known else { return }
                 let list = SprintReader.listForDisplay(in: folder)
+                let calendar = Calendar.current
+                var stretches: [Date: [DateInterval]] = [:]
+                for part in SprintReader.list(in: folder) {
+                    stretches[calendar.startOfDay(for: part.start.startedAt), default: []]
+                        .append(DateInterval(start: part.start.startedAt, duration: part.elapsedSeconds))
+                }
+                let days = stretches
                 await MainActor.run {
                     fingerprint = current
+                    tracked = days
                     show(list)
                 }
             }
@@ -96,44 +108,79 @@ struct HistoryView: View {
     }
 }
 
+/// What a record's circle and bar are drawn from: the whole stretch of time it covers, when in it the Mac
+/// was being tracked, and the visits away. A sprint is tracked from start to end. The all-day record runs
+/// from the day's first tracked moment to its last, with gaps where the Mac was not in use.
+struct RecordShape {
+    var from: Date
+    var to: Date
+    var spans: [DateInterval]
+    var events: [DistractionEvent]
+
+    init(_ record: SprintRecord, tracked: [Date: [DateInterval]]) {
+        events = record.events
+        if record.isAmbient {
+            let day = Calendar.current.startOfDay(for: record.start.startedAt)
+            var parts = tracked[day] ?? []
+            // A visit is tracked time too, even where its stretch's own times fall short of it.
+            parts += record.events.map { DateInterval(start: $0.startedAt, end: max($0.startedAt, $0.endedAt)) }
+            from = parts.map(\.start).min() ?? day
+            to = max(parts.map(\.end).max() ?? day, from.addingTimeInterval(1))
+            spans = parts
+        } else {
+            from = record.start.startedAt
+            to = from.addingTimeInterval(record.elapsedSeconds)
+            spans = [DateInterval(start: from, end: to)]
+        }
+    }
+
+    private func fraction(_ date: Date) -> Double {
+        min(1, max(0, date.timeIntervalSince(from) / max(1, to.timeIntervalSince(from))))
+    }
+
+    /// Green where tracked and on task, then red and amber over it for the visits away. The rest stays grey.
+    var arcs: [RingArc] {
+        spans.map { RingArc(from: fraction($0.start), to: fraction($0.end), color: Theme.good) }
+            + events.map { RingArc(from: fraction($0.startedAt), to: fraction($0.endedAt),
+                                   color: $0.category == .distraction ? Theme.bad : Theme.warn) }
+    }
+}
+
 struct SprintRow: View {
     var record: SprintRecord
+    var shape: RecordShape
     var selected = false
 
     var body: some View {
-        let distracted = 1 - Double(record.focusPercent) / 100
-        HStack(spacing: 11) {
-            ZStack {
-                Ring(progress: Double(record.focusPercent) / 100, lineWidth: 4.5, tint: levelColor(distracted))
-                Image(systemName: record.isAmbient ? "sun.max.fill" : "timer")
-                    .font(.system(size: 12, weight: .semibold)).foregroundStyle(.secondary)
-            }
-            .frame(width: 38, height: 38)
+        let tone = Theme.text(for: levelColor(1 - Double(record.focusPercent) / 100))
+        HStack(spacing: 10) {
+            // No least width for green here: a few seconds of tracking should not look like a stretch of the day.
+            ArcRing(arcs: shape.arcs, lineWidth: 6, minPoints: 2.5)
+                .frame(width: 42, height: 42)
+                .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
-                Text(record.start.task).font(.system(size: 13, weight: .semibold)).lineLimit(1)
+                Text(record.start.task).font(.system(size: 13.5, weight: .bold)).foregroundStyle(Theme.ink).lineLimit(1)
                 Text(record.isAmbient ? record.start.startedAt.formatted(date: .abbreviated, time: .omitted)
                                       : record.start.startedAt.formatted(date: .abbreviated, time: .shortened))
-                    .font(.system(size: 11)).foregroundStyle(.secondary)
-                HStack(spacing: 5) {
-                    Text(record.isAmbient ? "\(100 - record.focusPercent)% distracted" : "\(record.focusPercent)% focused")
-                        .font(.system(size: 11, weight: .semibold)).foregroundStyle(levelColor(distracted))
-                    Text("· \(record.events.count) switches")
-                        .font(.system(size: 11)).foregroundStyle(.secondary)
-                    if record.interrupted { Text("· interrupted").font(.system(size: 11)).foregroundStyle(Theme.bad) }
-                }
+                    .font(.system(size: 11.5)).foregroundStyle(Theme.soft).lineLimit(1)
+                Text((record.isAmbient ? "\(100 - record.focusPercent)% distracted" : "\(record.focusPercent)% focused")
+                     + " · \(record.events.count) switches" + (record.interrupted ? " · interrupted" : ""))
+                    .font(.system(size: 11.5, weight: .semibold)).foregroundStyle(tone)
+                    .lineLimit(2).fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 0)
         }
         .padding(10)
-        .background(selected ? Theme.brand.opacity(0.12) : Theme.surface, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
-            .strokeBorder(selected ? Theme.brand.opacity(0.5) : Theme.hairline, lineWidth: selected ? 1.5 : 1))
+        .background(selected ? Theme.brandTint : Color.clear, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous)
+            .strokeBorder(selected ? Theme.brand : Color.clear, lineWidth: 1.5))
         .contentShape(Rectangle())
     }
 }
 
 struct SprintDetail: View {
     var record: SprintRecord
+    var shape: RecordShape
     var source: HistorySource
     var sites = SiteBook()
     var searches: [SearchEntry] = []
@@ -177,75 +224,65 @@ struct SprintDetail: View {
     }
 
     var body: some View {
-        let distracted = 1 - Double(record.focusPercent) / 100
         ScrollView {
             // Lazy: cards and their pictures are only built as they scroll into view.
-            LazyVStack(alignment: .leading, spacing: 16) {
-                VStack(alignment: .leading, spacing: 6) {
+            LazyVStack(alignment: .leading, spacing: 14) {
+                VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 10) {
-                        Text(record.start.task).font(Theme.title(26))
+                        Text(record.start.task).font(Theme.title(28)).kerning(-0.6).foregroundStyle(Theme.ink)
                         Pill(text: status.text, tint: status.tint)
                     }
-                    Text(subtitle).font(.system(size: 13)).foregroundStyle(.secondary)
+                    Text(subtitle).font(.system(size: 13)).foregroundStyle(Theme.soft)
                 }
 
                 // Four across when there is room, two by two in a narrow window, so titles are never cut off.
                 ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 12) { ForEach(tiles.indices, id: \.self) { tiles[$0].frame(minWidth: 116) } }
-                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: 2), spacing: 12) {
+                    HStack(spacing: 8) { ForEach(tiles.indices, id: \.self) { tiles[$0].frame(minWidth: 116) } }
+                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 2), spacing: 8) {
                         ForEach(tiles.indices, id: \.self) { tiles[$0] }
                     }
                 }
                 .fixedSize(horizontal: false, vertical: true)
 
-                if !record.isAmbient {
-                    VStack(alignment: .leading, spacing: 10) {
-                        SectionLabel(text: "Timeline")
-                        TimelineBar(record: record)
+                VStack(alignment: .leading, spacing: 10) {
+                    SectionLabel(text: "Timeline")
+                    TimelineBar(shape: shape, showsGaps: record.isAmbient)
+                    if !approvedSince.isEmpty {
+                        let away = max(0, record.awaySeconds - approvedSince.reduce(0) { $0 + $1.durationSeconds })
+                        let percent = Int((away / record.elapsedSeconds * 100).rounded())
+                        Rectangle().fill(Theme.hairline).frame(height: 1).padding(.top, 2)
+                        (Text("Leaving out \(approvedSince.count) visit\(approvedSince.count == 1 ? "" : "s") to sites approved since: ")
+                            .fontWeight(.bold).foregroundColor(Theme.ink)
+                         + Text("\(percent)% distracted · \(Format.duration(away)) away · \(record.events.count - approvedSince.count) switches. ")
+                         + Text("The numbers above count every visit as it was recorded."))
+                            .font(.system(size: 12)).foregroundStyle(Theme.soft)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
-                    .card()
                 }
-
-                if !approvedSince.isEmpty {
-                    let away = max(0, record.awaySeconds - approvedSince.reduce(0) { $0 + $1.durationSeconds })
-                    let percent = Int((away / record.elapsedSeconds * 100).rounded())
-                    HStack(alignment: .top, spacing: 12) {
-                        Image(systemName: "checkmark.seal.fill").font(.system(size: 20)).foregroundStyle(Theme.good)
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text("Leaving out \(approvedSince.count) visit\(approvedSince.count == 1 ? "" : "s") to sites approved since")
-                                .font(.system(size: 13, weight: .semibold))
-                            Text("\(percent)% distracted · \(Format.duration(away)) away · \(record.events.count - approvedSince.count) switches")
-                                .font(Theme.number(17))
-                            Text("The numbers above count every visit as it was recorded.")
-                                .font(.system(size: 12)).foregroundStyle(.secondary)
-                        }
-                        Spacer(minLength: 0)
-                    }
-                    .card()
-                }
-
-                if !ownSearches.isEmpty { SearchCard(entries: ownSearches) }
+                .card(padding: 16)
 
                 if let live = liveVisit {
                     let _ = engine.pulse
-                    HStack(spacing: 10) {
-                        Image(systemName: "dot.radiowaves.left.and.right").font(.system(size: 16, weight: .semibold)).foregroundStyle(.white)
+                    HStack(spacing: 12) {
                         VStack(alignment: .leading, spacing: 1) {
-                            Text("Happening now: \(live.label)").font(.system(size: 14, weight: .bold)).foregroundStyle(.white)
-                            Text("It is added to the list below as soon as you leave it.").font(.system(size: 12)).foregroundStyle(.white.opacity(0.85))
+                            Text("Happening now: \(live.label)").font(.system(size: 14, weight: .bold))
+                            Text("It is added to the list below as soon as you leave it.").font(.system(size: 12))
                         }
                         Spacer()
-                        Text(SprintEngine.clock(Date().timeIntervalSince(live.since))).font(Theme.number(20)).foregroundStyle(.white)
+                        Text(SprintEngine.clock(Date().timeIntervalSince(live.since))).font(Theme.number(20))
                     }
-                    .padding(14)
-                    .background(Theme.bad, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 16).padding(.vertical, 12)
+                    .background(Theme.badFill, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
                 }
+
+                if !ownSearches.isEmpty { SearchCard(entries: ownSearches) }
 
                 if record.events.isEmpty && liveVisit == nil {
                     HStack(spacing: 10) {
                         Image(systemName: "checkmark.seal.fill").font(.system(size: 20)).foregroundStyle(Theme.good)
                         Text(record.isAmbient ? "No distractions recorded this day." : "No switches away during this sprint. Nice work.")
-                            .font(.system(size: 14, weight: .medium))
+                            .font(.system(size: 14, weight: .medium)).foregroundStyle(Theme.ink)
                         Spacer()
                     }
                     .card()
@@ -261,22 +298,22 @@ struct SprintDetail: View {
                     }
                 }
             }
-            .padding(24)
+            .padding(EdgeInsets(top: 44, leading: 20, bottom: 24, trailing: 20))
         }
     }
 
     private var tiles: [StatTile] {
-        let distracted = 1 - Double(record.focusPercent) / 100
+        let distracted = Theme.text(for: levelColor(1 - Double(record.focusPercent) / 100))
         if record.isAmbient {
-            return [StatTile(title: "Distracted", value: "\(100 - record.focusPercent)%", color: levelColor(distracted), icon: "gauge.medium"),
-                    StatTile(title: "Switches", value: "\(record.events.count)", icon: "arrow.left.arrow.right"),
-                    StatTile(title: "Time away", value: Format.duration(record.awaySeconds), icon: "clock"),
-                    StatTile(title: "Tracked", value: Format.duration(record.elapsedSeconds), icon: "desktopcomputer")]
+            return [StatTile(title: "Distracted", value: "\(100 - record.focusPercent)%", color: distracted),
+                    StatTile(title: "Switches", value: "\(record.events.count)"),
+                    StatTile(title: "Time away", value: Format.duration(record.awaySeconds)),
+                    StatTile(title: "Tracked", value: Format.duration(record.elapsedSeconds))]
         }
-        return [StatTile(title: "Focused", value: "\(record.focusPercent)%", color: levelColor(distracted), icon: "scope"),
-                StatTile(title: "Switches", value: "\(record.events.count)", icon: "arrow.left.arrow.right"),
-                StatTile(title: "Time away", value: Format.duration(record.awaySeconds), icon: "clock"),
-                StatTile(title: "Best streak", value: Format.duration(record.longestFocusSeconds), icon: "flame")]
+        return [StatTile(title: "Focused", value: "\(record.focusPercent)%", color: distracted),
+                StatTile(title: "Switches", value: "\(record.events.count)"),
+                StatTile(title: "Time away", value: Format.duration(record.awaySeconds)),
+                StatTile(title: "Best streak", value: Format.duration(record.longestFocusSeconds))]
     }
 
     private var subtitle: String {
@@ -295,78 +332,69 @@ struct SearchCard: View {
     var body: some View {
         let counts = SearchLog.counts(entries)
         let offTopic = Array(entries.filter { $0.label == "distraction" }.reversed()) // newest first
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 6) {
                 SectionLabel(text: "Web searches")
                 Spacer()
                 Pill(text: "\(counts.work) work", tint: Theme.good)
-                Pill(text: "\(counts.distraction) distraction", tint: counts.distraction > 0 ? Theme.bad : .secondary)
-                if counts.personal > 0 { Pill(text: "\(counts.personal) private", tint: .secondary, icon: "lock.fill") }
+                Pill(text: "\(counts.distraction) distraction", tint: counts.distraction > 0 ? Theme.bad : Theme.soft)
+                if counts.personal > 0 { Pill(text: "\(counts.personal) private", tint: Theme.soft, icon: "lock.fill") }
             }
             ForEach(offTopic) { entry in
                 HStack(alignment: .top, spacing: 10) {
-                    Image(systemName: "magnifyingglass")
-                        .font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.bad)
-                        .frame(width: 26, height: 26)
-                        .background(Theme.bad.opacity(0.13), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
                     VStack(alignment: .leading, spacing: 1) {
-                        Text(entry.text ?? "").font(.system(size: 14, weight: .semibold))
+                        Text(entry.text ?? "").font(.system(size: 14, weight: .semibold)).foregroundStyle(Theme.ink)
                         if let reason = entry.reason, !reason.isEmpty {
-                            Text(reason).font(.system(size: 12)).foregroundStyle(.secondary)
+                            Text(reason).font(.system(size: 12)).foregroundStyle(Theme.soft)
                         }
                     }
                     Spacer(minLength: 8)
                     if let date = entry.date {
-                        Text(date.formatted(date: .omitted, time: .shortened)).font(Theme.number(12)).foregroundStyle(.secondary)
+                        Text(date.formatted(date: .omitted, time: .shortened)).font(.system(size: 12)).foregroundStyle(Theme.soft)
                     }
                 }
             }
             Text(offTopic.isEmpty ? "No distraction searches. Work searches are only counted, and private topics are never recorded."
                                   : "Only distraction searches are listed. Work searches are counted, and private topics are never recorded.")
-                .font(.system(size: 12)).foregroundStyle(.secondary)
+                .font(.system(size: 12)).foregroundStyle(Theme.soft)
         }
-        .card()
+        .card(padding: 16)
     }
 }
 
-/// The whole sprint as one bar: green is on task, red and amber are the visits away.
+/// The record as one straight bar: green is on task, red and amber are the visits away, and (for the
+/// all-day record) grey is where the Mac was not in use.
 struct TimelineBar: View {
-    var record: SprintRecord
+    var shape: RecordShape
+    var showsGaps = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 8) {
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
-                    Capsule().fill(Theme.good.opacity(0.75))
-                    ForEach(record.events) { event in
-                        let x = event.startedAt.timeIntervalSince(record.start.startedAt) / record.elapsedSeconds
-                        let w = event.durationSeconds / record.elapsedSeconds
-                        Rectangle()
-                            .fill(event.category == .distraction ? Theme.bad : Theme.warn)
-                            .frame(width: max(2, geo.size.width * w))
-                            .offset(x: geo.size.width * min(1, max(0, x)))
+                    Theme.track
+                    ForEach(Array(shape.arcs.enumerated()), id: \.offset) { _, arc in
+                        // The same least width as the circles, so a very short switch still shows.
+                        let span = ArcRing.span(arc, least: Double(2 / max(1, geo.size.width)))
+                        Rectangle().fill(arc.color)
+                            .frame(width: geo.size.width * (span.to - span.from))
+                            .offset(x: geo.size.width * span.from)
                     }
                 }
-                .clipShape(Capsule())
+                .clipShape(PillShape())
             }
-            .frame(height: 14)
+            .frame(height: 22)
+            .accessibilityElement()
+            .accessibilityLabel("The record as one bar: on task in green, visits away in red and amber")
             HStack(spacing: 14) {
-                Text(Format.clock(record.start.startedAt))
-                Spacer()
-                legend("On task", Theme.good)
-                legend("Distraction", Theme.bad)
-                legend("Off task", Theme.warn)
-                Spacer()
-                Text(Format.clock(record.start.startedAt.addingTimeInterval(record.elapsedSeconds)))
+                Text(Format.clock(shape.from)).lineLimit(1).fixedSize()
+                Spacer(minLength: 0)
+                LegendRow(items: [("On task", Theme.good), ("Distraction", Theme.bad), ("Off task", Theme.warn)]
+                                 + (showsGaps ? [("Not in use", Theme.track)] : []))
+                Spacer(minLength: 0)
+                Text(Format.clock(shape.to)).lineLimit(1).fixedSize()
             }
-            .font(.system(size: 11)).foregroundStyle(.secondary)
-        }
-    }
-
-    private func legend(_ text: String, _ color: Color) -> some View {
-        HStack(spacing: 4) {
-            Circle().fill(color).frame(width: 7, height: 7)
-            Text(text)
+            .font(.system(size: 11.5)).foregroundStyle(Theme.soft)
         }
     }
 }
@@ -380,37 +408,30 @@ struct EventCard: View {
 
     var body: some View {
         let tint = event.category == .distraction ? Theme.bad : Theme.warn
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(spacing: 10) {
-                Image(systemName: event.host != nil ? "globe" : "app.dashed")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(tint)
-                    .frame(width: 32, height: 32)
-                    .background(tint.opacity(0.13), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(event.host ?? event.appName).font(.system(size: 15, weight: .semibold))
+                    Text(event.host ?? event.appName).font(Theme.title(17)).foregroundStyle(Theme.ink)
                     Text(event.host != nil ? (event.title.isEmpty ? event.appName : "\(event.appName) · \(event.title)")
                                            : (event.title.isEmpty ? "App" : event.title))
-                        .font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
+                        .font(.system(size: 12)).foregroundStyle(Theme.soft).lineLimit(1)
                 }
                 Spacer()
                 if cleared { Pill(text: "Approved since", tint: Theme.good, icon: "checkmark") }
                 Pill(text: event.category == .distraction ? "Distraction" : "Off task", tint: tint)
             }
 
-            HStack(spacing: 0) {
-                figure("Started", Format.clock(event.startedAt), .primary)
-                Divider().frame(height: 34).padding(.horizontal, 16)
-                figure("Away for", Format.duration(event.durationSeconds), tint)
-                Divider().frame(height: 34).padding(.horizontal, 16)
-                figure("Ended", Format.clock(event.endedAt), .primary)
+            HStack(spacing: 22) {
+                figure("Started", Format.clock(event.startedAt), Theme.ink)
+                figure("Away for", Format.duration(event.durationSeconds), Theme.text(for: tint))
+                figure("Ended", Format.clock(event.endedAt), Theme.ink)
                 Spacer()
             }
 
             if event.media.isEmpty {
-                Text("No picture was captured for this switch.").font(.system(size: 12)).foregroundStyle(.secondary)
+                Text("No picture was captured for this switch.").font(.system(size: 12)).foregroundStyle(Theme.soft)
             } else {
-                HStack(alignment: .top, spacing: 12) {
+                HStack(alignment: .top, spacing: 10) {
                     ForEach(event.media, id: \.self) { ref in
                         VStack(alignment: .leading, spacing: 5) {
                             SectionLabel(text: ref.role == .start ? "First seconds" : "Last seconds")
@@ -421,13 +442,13 @@ struct EventCard: View {
                 }
             }
         }
-        .card()
+        .card(padding: 16)
     }
 
     private func figure(_ label: String, _ value: String, _ color: Color) -> some View {
         VStack(alignment: .leading, spacing: 1) {
-            SectionLabel(text: label)
-            Text(value).font(Theme.number(22)).foregroundStyle(color)
+            Text(label).font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.soft)
+            Text(value).font(Theme.number(20)).foregroundStyle(color)
         }
     }
 }
@@ -490,15 +511,15 @@ struct MediaView: View {
                     .onTapGesture(perform: onOpen)
                     .help("Click to view larger")
             } else {
-                RoundedRectangle(cornerRadius: 10).fill(Color.primary.opacity(0.06))
-                    .overlay(Text(failed ? "Not available yet" : "Loading…").font(.system(size: 12)).foregroundStyle(.secondary))
+                RoundedRectangle(cornerRadius: 12).fill(Theme.raised)
+                    .overlay(Text(failed ? "Not available yet" : "Loading…").font(.system(size: 12)).foregroundStyle(Theme.soft))
             }
         }
         .frame(maxWidth: 380)
         // Pictures keep their own shape; clips and placeholders get a fixed box.
         .frame(height: preview != nil && ref.kind == .image ? nil : 220)
-        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Theme.hairline))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Theme.hairline))
         .task(id: url) { await load() }
     }
 

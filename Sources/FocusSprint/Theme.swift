@@ -196,7 +196,7 @@ struct LegendRow: View {
             ForEach(items, id: \.0) { item in
                 HStack(spacing: 5) {
                     Circle().fill(item.1).frame(width: 8, height: 8)
-                    Text(item.0)
+                    Text(item.0).lineLimit(1).fixedSize()
                 }
             }
         }
