@@ -91,6 +91,7 @@ enum Snapshots {
                         continue
                     }
                     shot.dark = dark
+                    MediaViewer.shared.close() // left open by the viewer's own picture
                     shot.prepare()
                     await render(shot, to: sub.appendingPathComponent(shot.name + ".png"))
                 }

@@ -195,7 +195,8 @@ struct TodayCard: View {
         VStack(alignment: .leading, spacing: 0) {
             Text("Today").font(Theme.title(22)).foregroundStyle(Theme.ink)
             // Very large for one or two digits; shrinks to fit the card at 100%.
-            (Text("\(percent)").font(.system(size: 100, weight: .bold)).kerning(-4)
+            (Text("\(percent)").font(.system(size: 100, weight: .bold))
+             + Text(" ").font(.system(size: 8))
              + Text("%").font(.system(size: 40, weight: .bold)))
                 .monospacedDigit()
                 .foregroundStyle(levelColor(level))
