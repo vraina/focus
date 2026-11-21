@@ -13,6 +13,17 @@ struct SprintSummary {
     var focusPercent: Int
     var switches: Int
     var awaySeconds: Double
+    /// For the result screen's circle: how long the sprint ran, and when in it each visit away fell.
+    var elapsed: Double = 0
+    var visits: [SprintVisit] = []
+}
+
+/// One visit away during a sprint, in seconds from the sprint's start. Only for drawing the circles:
+/// what is recorded and sent is the event the helper is given, exactly as before.
+struct SprintVisit {
+    var from: Double
+    var to: Double
+    var distraction: Bool
 }
 
 @MainActor
@@ -35,6 +46,9 @@ final class SprintEngine: ObservableObject {
     private(set) var start: SprintStart?
     private(set) var endsAt = Date()
     private(set) var breakEndsAt = Date()
+    private(set) var breakSeconds = 300.0
+    /// The finished visits away of the sprint that is running (for the circle).
+    private(set) var visits: [SprintVisit] = []
     private(set) var awayNow: (label: String, since: Date, category: EventCategory, host: String?)?
     /// Website labels (AI and parent decisions), kept current by the helper.
     private(set) var sites = SiteBook()
@@ -125,6 +139,23 @@ final class SprintEngine: ObservableObject {
         // With no end to count towards, the ring goes round once an hour.
         if start.isOpenEnded { return sprintElapsed.truncatingRemainder(dividingBy: 3600) / 3600 }
         return min(1, sprintElapsed / Double(max(1, start.plannedSeconds)))
+    }
+    /// The running sprint as a circle: the full circle is the planned length (the time so far when there is
+    /// no planned end), the accent arc is the time so far, with each visit away drawn over it where it happened.
+    var sprintArcs: [RingArc] {
+        guard phase == .running, let start else { return [] }
+        let elapsed = sprintElapsed
+        let whole = start.isOpenEnded ? max(1, elapsed) : Double(max(1, start.plannedSeconds))
+        var arcs = [RingArc(from: 0, to: elapsed / whole, color: Theme.brand)]
+        var all = visits
+        if let open { all.append(SprintVisit(from: open.startedAt.timeIntervalSince(start.startedAt), to: elapsed,
+                                             distraction: open.category == .distraction)) }
+        arcs += all.map { RingArc(from: $0.from / whole, to: $0.to / whole, color: $0.distraction ? Theme.bad : Theme.warn) }
+        return arcs
+    }
+    /// The break as a circle: the full circle is the break, the accent arc the time used.
+    var breakArcs: [RingArc] {
+        [RingArc(from: 0, to: 1 - remaining / max(1, breakSeconds), color: Theme.brand)]
     }
     var sprintDistraction: Double { sprintElapsed > 0 ? min(1, sprintAway / sprintElapsed) : 0 }
     private var ambientAwayLive: Double {
@@ -287,11 +318,15 @@ final class SprintEngine: ObservableObject {
         SprintRecord.runningId = sprint.id
         closedAway = 0
         switches = 0
+        visits = []
         open = nil
         awayNow = nil
         lastSummary = nil
         phase = .running
     }
+
+    /// The result screen has been left: the next visit to Focus shows setup.
+    func clearSummary() { lastSummary = nil }
 
     func stopEarly() {
         // Stopping is how an open-ended sprint is meant to end, so that one counts as completed.
@@ -307,7 +342,9 @@ final class SprintEngine: ObservableObject {
 
     func startBreak(minutes: Int) {
         guard phase == .idle else { return }
-        breakEndsAt = Date().addingTimeInterval(Double(minutes * 60))
+        lastSummary = nil
+        breakSeconds = Double(minutes * 60)
+        breakEndsAt = Date().addingTimeInterval(breakSeconds)
         phase = .onBreak
     }
 
@@ -323,7 +360,7 @@ final class SprintEngine: ObservableObject {
         }
         lastSummary = SprintSummary(task: sprint.task, status: status,
                                     focusPercent: Int((max(0, elapsed - closedAway) / max(1, elapsed) * 100).rounded()),
-                                    switches: switches, awaySeconds: closedAway)
+                                    switches: switches, awaySeconds: closedAway, elapsed: elapsed, visits: visits)
         baseSprint += elapsed
         baseAway += closedAway
         baseSwitches += switches
@@ -343,31 +380,40 @@ final class SprintEngine: ObservableObject {
         timer = nil
     }
 
-    func setPreview(running: Bool, away: Bool, now: Date, openEnded: Bool = false) {
+    func setPreview(running: Bool, away: Bool, now: Date, openEnded: Bool = false, done: Bool = false, onBreak: Bool = false) {
         baseSprint = 3.2 * 3600; baseAway = 14 * 60; baseSwitches = 23
         open = nil
+        lastSummary = nil
         if running {
             start = SprintStart(id: "preview", device: "MacBook", user: "sam", task: "Algebra homework, chapter 4",
                                 plannedSeconds: 1500, startedAt: now.addingTimeInterval(-560), allowedApps: [],
                                 allowedBundleIds: [], allowedDomains: [], captureMode: .screenshot)
             endsAt = now.addingTimeInterval(940)
+            visits = [SprintVisit(from: 150, to: 180, distraction: false), SprintVisit(from: 300, to: 318, distraction: true)]
             if openEnded { // a sprint with no timer, 47 minutes in
                 start?.plannedSeconds = 0
                 start?.task = "Chemistry homework"
                 start?.startedAt = now.addingTimeInterval(-47 * 60 - 12)
                 endsAt = .distantFuture
+                visits = [SprintVisit(from: 600, to: 630, distraction: false), SprintVisit(from: 1700, to: 1718, distraction: true)]
             }
             closedAway = away ? 90 : 48
             switches = away ? 4 : 3
             awayNow = away ? ("espn.com", now.addingTimeInterval(-42), .distraction, "espn.com") : nil
-            lastSummary = nil
+            if away { visits.append(SprintVisit(from: 518, to: 560, distraction: true)) } // the visit happening now
             phase = .running
         } else {
             start = nil
             awayNow = away ? ("rediff.com", now.addingTimeInterval(-8), .distraction, "rediff.com") : nil
-            phase = .idle
-            lastSummary = SprintSummary(task: "Algebra homework, chapter 4", status: .completed, focusPercent: 92,
-                                        switches: 3, awaySeconds: 118)
+            phase = onBreak ? .onBreak : .idle
+            if onBreak { breakSeconds = 300; breakEndsAt = now.addingTimeInterval(252) }
+            if done {
+                lastSummary = SprintSummary(task: "Algebra homework, chapter 4", status: .completed, focusPercent: 92,
+                                            switches: 3, awaySeconds: 118, elapsed: 1500,
+                                            visits: [SprintVisit(from: 240, to: 300, distraction: false),
+                                                     SprintVisit(from: 700, to: 740, distraction: true),
+                                                     SprintVisit(from: 1200, to: 1218, distraction: false)])
+            }
         }
         pulse &+= 1
     }
@@ -544,7 +590,11 @@ final class SprintEngine: ObservableObject {
         awayNow = nil
         visit.recorder.stop()
         let duration = now.timeIntervalSince(visit.startedAt)
-        if sprint.isAmbient { ambient?.away += duration } else { closedAway += duration }
+        if sprint.isAmbient { ambient?.away += duration } else {
+            closedAway += duration
+            visits.append(SprintVisit(from: visit.startedAt.timeIntervalSince(sprint.startedAt),
+                                      to: now.timeIntervalSince(sprint.startedAt), distraction: visit.category == .distraction))
+        }
         if let host = visit.context.host { awayByHost[host, default: 0] += duration }
         let event = DistractionEvent(
             id: "\(sprint.id)-e\(visit.seq)", sprintId: sprint.id, seq: visit.seq, startedAt: visit.startedAt,

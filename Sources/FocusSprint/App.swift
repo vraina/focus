@@ -170,8 +170,8 @@ struct ContentView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .frame(height: 38)
                         .foregroundStyle(pane == item ? Theme.canvas : Theme.soft)
-                        .background(pane == item ? Theme.ink : Color.clear, in: Capsule())
-                        .contentShape(Capsule())
+                        .background(pane == item ? Theme.ink : Color.clear, in: PillShape())
+                        .contentShape(PillShape())
                 }
                 .buttonStyle(.plain)
                 .accessibilityAddTraits(pane == item ? .isSelected : [])

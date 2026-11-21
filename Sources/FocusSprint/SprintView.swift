@@ -56,7 +56,8 @@ struct SprintView: View {
                 VStack(alignment: .leading, spacing: 14) {
                     notices
                     switch engine.phase {
-                    case .idle: setup
+                    case .idle:
+                        if let summary = engine.lastSummary { finished(summary) } else { setup }
                     case .running: live
                     case .onBreak: onBreak
                     }
@@ -65,7 +66,7 @@ struct SprintView: View {
                 .frame(maxWidth: 860, alignment: .leading)
                 .frame(maxWidth: .infinity)
             }
-            if engine.phase == .idle { startRow }
+            if engine.phase == .idle, engine.lastSummary == nil { startRow }
         }
         .onAppear(perform: refresh)
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in refresh() }
@@ -191,7 +192,7 @@ struct SprintView: View {
                         .foregroundStyle(Theme.goodText)
                         .padding(.leading, 12).padding(.trailing, 4)
                         .frame(height: 30)
-                        .background(Theme.goodTint, in: Capsule())
+                        .background(Theme.goodTint, in: PillShape())
                     }
                     TextField(sites.isEmpty ? "khanacademy.org, docs.google.com" : "Type a website and press Return", text: $siteDraft)
                         .textFieldStyle(.plain)
@@ -272,45 +273,92 @@ struct SprintView: View {
         .overlay(alignment: .top) { Rectangle().fill(Theme.hairline).frame(height: 1) }
     }
 
+    // MARK: Finished
+
+    /// Shown once when a sprint ends. Both buttons leave it, and so does going anywhere else in the app.
+    private func finished(_ summary: SprintSummary) -> some View {
+        let whole = max(1, summary.elapsed)
+        let arcs = [RingArc(from: 0, to: 1, color: Theme.good)]
+            + summary.visits.map { RingArc(from: $0.from / whole, to: $0.to / whole, color: $0.distraction ? Theme.bad : Theme.warn) }
+        return VStack(spacing: 12) {
+            Text(summary.status == .completed ? "Sprint complete" : "Sprint ended early")
+                .font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.soft)
+            Text(summary.task).font(Theme.title(24)).foregroundStyle(Theme.ink).multilineTextAlignment(.center)
+            ZStack {
+                ArcRing(arcs: arcs, lineWidth: 12)
+                VStack(spacing: 4) {
+                    Text("\(summary.focusPercent)%").font(Theme.number(66)).kerning(-2)
+                        .foregroundStyle(Theme.text(for: levelColor(1 - Double(summary.focusPercent) / 100)))
+                    Text("focused").font(.system(size: 13)).foregroundStyle(Theme.soft)
+                }
+            }
+            .frame(width: 240, height: 240)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("\(summary.focusPercent) percent focused. The full circle is the sprint, with red and amber arcs for the switches away.")
+            Text("\(summary.switches) \(summary.switches == 1 ? "switch" : "switches") · \(Format.duration(summary.awaySeconds)) away · \(Format.duration(summary.elapsed))")
+                .font(.system(size: 14)).foregroundStyle(Theme.soft)
+            HStack(spacing: 10) {
+                Button("Take a 5 min break") { engine.startBreak(minutes: 5) }
+                    .buttonStyle(PrimaryButtonStyle(wide: false))
+                Button("Start another sprint") { engine.clearSummary() }
+                    .buttonStyle(OutlineButtonStyle(height: 50))
+            }
+            .padding(.top, 8)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.top, 40)
+        .onDisappear { if engine.phase == .idle { engine.clearSummary() } }
+    }
+
     // MARK: Running
 
     private var live: some View {
         let _ = engine.pulse
-        return VStack(spacing: 22) {
-            VStack(spacing: 6) {
+        return VStack(spacing: 12) {
+            VStack(spacing: 4) {
                 SectionLabel(text: "Focusing on")
-                Text(engine.start?.task ?? "").font(Theme.title(22)).multilineTextAlignment(.center)
+                Text(engine.start?.task ?? "").font(Theme.title(24)).foregroundStyle(Theme.ink).multilineTextAlignment(.center)
             }
             ZStack {
-                Ring(progress: engine.sprintProgress, lineWidth: 16, tint: nil)
-                VStack(spacing: 2) {
-                    Text(SprintEngine.clock(engine.clockSeconds)).font(Theme.number(engine.clockSeconds >= 6000 ? 56 : 68))
-                    Text(engine.isOpenEnded ? "so far · until you stop" : "remaining").font(.system(size: 13)).foregroundStyle(.secondary)
+                ArcRing(arcs: engine.sprintArcs, lineWidth: 11)
+                VStack(spacing: 4) {
+                    Text(SprintEngine.clock(engine.clockSeconds)).font(Theme.number(engine.clockSeconds >= 6000 ? 54 : 66)).kerning(-2)
+                        .foregroundStyle(Theme.ink)
+                    Text(engine.isOpenEnded ? "so far · until you stop" : "remaining").font(.system(size: 13)).foregroundStyle(Theme.soft)
                 }
             }
-            .frame(width: 280, height: 280)
-            .padding(.vertical, 4)
+            .frame(width: 260, height: 260)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(engine.isOpenEnded
+                ? "\(SprintEngine.clock(engine.clockSeconds)) so far. The full circle is the time so far, with red and amber where you were away."
+                : "\(SprintEngine.clock(engine.clockSeconds)) remaining. The full circle is the planned sprint. The coloured part is the time so far, with red and amber where you were away.")
+            LegendRow(items: [("On task", Theme.brand), ("Distraction", Theme.bad), ("Off task", Theme.warn)]
+                             + (engine.isOpenEnded ? [] : [("Still to go", Theme.track)]))
 
-            if let away = engine.awayNow {
-                Pill(text: "Away: \(away.label) · \(SprintEngine.clock(Date().timeIntervalSince(away.since)))",
-                     tint: Theme.bad, icon: "exclamationmark.triangle.fill")
-                    .scaleEffect(1.25)
-            } else {
-                Pill(text: "On task", tint: Theme.good, icon: "checkmark.circle.fill").scaleEffect(1.25)
+            Group {
+                if let away = engine.awayNow {
+                    Text("Away: \(away.label) · \(SprintEngine.clock(Date().timeIntervalSince(away.since)))")
+                        .foregroundStyle(.white).padding(.horizontal, 18).padding(.vertical, 7)
+                        .background(Theme.badFill, in: PillShape())
+                } else {
+                    Text("On task")
+                        .foregroundStyle(Theme.goodText).padding(.horizontal, 18).padding(.vertical, 7)
+                        .background(Theme.goodTint, in: PillShape())
+                }
             }
+            .font(.system(size: 15, weight: .bold)).lineLimit(1)
+            .padding(.top, 4)
 
-            HStack(spacing: 12) {
-                StatTile(title: "Switches", value: "\(engine.sprintSwitches)", icon: "arrow.left.arrow.right")
-                StatTile(title: "Time away", value: Format.duration(engine.sprintAway), icon: "clock")
+            HStack(spacing: 10) {
+                StatTile(title: "Switches", value: "\(engine.sprintSwitches)")
+                StatTile(title: "Time away", value: Format.duration(engine.sprintAway))
                 StatTile(title: "Distraction", value: "\(Int((engine.sprintDistraction * 100).rounded()))%",
-                         color: levelColor(engine.sprintDistraction), icon: "gauge.medium")
+                         color: Theme.text(for: levelColor(engine.sprintDistraction)))
             }
-            .padding(.top, 6)
+            .frame(maxWidth: 460)
 
             Button(engine.isOpenEnded ? "End sprint" : "End sprint early") { engine.stopEarly() }
-                .buttonStyle(.plain)
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(Theme.bad)
+                .buttonStyle(OutlineButtonStyle(tint: Theme.badText))
         }
         .frame(maxWidth: .infinity)
         .padding(.top, 8)
@@ -318,15 +366,25 @@ struct SprintView: View {
 
     private var onBreak: some View {
         let _ = engine.pulse
-        return VStack(spacing: 18) {
-            Image(systemName: "cup.and.saucer.fill").font(.system(size: 40)).foregroundStyle(Theme.gradient)
-            Text("Break").font(Theme.title(30))
-            Text(SprintEngine.clock(engine.remaining)).font(Theme.number(68))
-            Text("Nothing is tracked during a break.").font(.system(size: 13)).foregroundStyle(.secondary)
-            Button("Skip break") { engine.stopEarly() }.controlSize(.large)
+        return VStack(spacing: 12) {
+            SectionLabel(text: "Break")
+            ZStack {
+                ArcRing(arcs: engine.breakArcs, lineWidth: 11)
+                VStack(spacing: 4) {
+                    Text(SprintEngine.clock(engine.remaining)).font(Theme.number(66)).kerning(-2).foregroundStyle(Theme.ink)
+                    Text("remaining").font(.system(size: 13)).foregroundStyle(Theme.soft)
+                }
+            }
+            .frame(width: 260, height: 260)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("\(SprintEngine.clock(engine.remaining)) of the break remaining. The full circle is the break; the coloured part is the time used.")
+            Text("Nothing is tracked during a break.").font(.system(size: 14)).foregroundStyle(Theme.soft)
+            Button("Skip break") { engine.stopEarly() }
+                .buttonStyle(OutlineButtonStyle(height: 46))
+                .padding(.top, 10)
         }
         .frame(maxWidth: .infinity)
-        .padding(.top, 60)
+        .padding(.top, 40)
     }
 }
 
@@ -352,8 +410,8 @@ private struct AppPill: View {
             .frame(maxWidth: .infinity)
             .frame(height: 40)
             .foregroundStyle(ticked ? Theme.onTicked : Theme.ink)
-            .background(ticked ? Theme.ticked : Theme.raised, in: Capsule())
-            .contentShape(Capsule())
+            .background(ticked ? Theme.ticked : Theme.raised, in: PillShape())
+            .contentShape(PillShape())
         }
         .buttonStyle(.plain)
         .accessibilityLabel(name)

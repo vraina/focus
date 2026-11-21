@@ -60,6 +60,26 @@ func levelColor(_ fraction: Double) -> Color {
     return Theme.bad
 }
 
+/// A fully rounded pill, drawn as two half circles joined by straight edges. (The system's Capsule leaves
+/// small spikes at the ends of an outline at some sizes.)
+struct PillShape: InsettableShape {
+    var inset: CGFloat = 0
+
+    func path(in rect: CGRect) -> Path {
+        let box = rect.insetBy(dx: inset, dy: inset)
+        let radius = min(box.width, box.height) / 2
+        var path = Path()
+        path.addArc(center: CGPoint(x: box.minX + radius, y: box.midY), radius: radius,
+                    startAngle: .degrees(90), endAngle: .degrees(270), clockwise: false)
+        path.addArc(center: CGPoint(x: box.maxX - radius, y: box.midY), radius: radius,
+                    startAngle: .degrees(270), endAngle: .degrees(90), clockwise: false)
+        path.closeSubpath()
+        return path
+    }
+
+    func inset(by amount: CGFloat) -> PillShape { PillShape(inset: inset + amount) }
+}
+
 extension View {
     /// The standard raised panel.
     func card(padding: CGFloat = 16, radius: CGFloat = 18) -> some View {
@@ -98,7 +118,7 @@ struct Pill: View {
         .foregroundStyle(Theme.text(for: tint))
         .padding(.horizontal, 9)
         .padding(.vertical, 4)
-        .background(Theme.fill(for: tint), in: Capsule(style: .continuous))
+        .background(Theme.fill(for: tint), in: PillShape())
     }
 }
 
@@ -121,23 +141,82 @@ struct Ring: View {
     }
 }
 
+/// One coloured stretch of a circle: where it starts and ends, as fractions of the whole duration.
+struct RingArc {
+    var from: Double
+    var to: Double
+    var color: Color
+}
+
+/// The app's one kind of circle. The full circle is a whole duration (a sprint's planned length, a break,
+/// a finished record) and each arc sits at the time it happened. Later arcs are drawn over earlier ones.
+/// Every arc is at least `minPoints` long, so a very short switch still shows on a small circle.
+struct ArcRing: View {
+    var arcs: [RingArc]
+    var lineWidth: CGFloat
+    var track: Color = Theme.track
+    var minPoints: CGFloat = 3
+
+    var body: some View {
+        GeometryReader { geo in
+            let diameter = max(1, min(geo.size.width, geo.size.height) - lineWidth)
+            let least = Double(minPoints / (.pi * diameter))
+            ZStack {
+                Circle().stroke(track, lineWidth: lineWidth)
+                ForEach(Array(arcs.enumerated()), id: \.offset) { _, arc in
+                    let span = ArcRing.span(arc, least: least)
+                    Circle().trim(from: span.from, to: span.to)
+                        .stroke(arc.color, style: StrokeStyle(lineWidth: lineWidth, lineCap: .butt))
+                        .rotationEffect(.degrees(-90))
+                }
+            }
+            .padding(lineWidth / 2)
+        }
+        .aspectRatio(1, contentMode: .fit)
+    }
+
+    /// The arc clamped to the circle and widened around its middle to the least visible length.
+    static func span(_ arc: RingArc, least: Double) -> (from: Double, to: Double) {
+        var from = min(1, max(0, arc.from)), to = min(1, max(from, arc.to))
+        if to <= 0, from <= 0 { return (0, 0) } // nothing has happened yet
+        if to - from < least {
+            let middle = (from + to) / 2
+            from = max(0, min(1 - least, middle - least / 2))
+            to = min(1, from + least)
+        }
+        return (from, to)
+    }
+}
+
+/// The dot-and-word key under a circle or bar.
+struct LegendRow: View {
+    var items: [(String, Color)]
+    var body: some View {
+        HStack(spacing: 14) {
+            ForEach(items, id: \.0) { item in
+                HStack(spacing: 5) {
+                    Circle().fill(item.1).frame(width: 8, height: 8)
+                    Text(item.0)
+                }
+            }
+        }
+        .font(.system(size: 11.5)).foregroundStyle(Theme.soft)
+    }
+}
+
 struct StatTile: View {
     var title: String
     var value: String
-    var color: Color = .primary
+    var color: Color = Theme.ink
     var icon: String?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 5) {
-                if let icon { Image(systemName: icon).font(.system(size: 11, weight: .semibold)) }
-                Text(title).font(.system(size: 12, weight: .medium)).lineLimit(1).minimumScaleFactor(0.8)
-            }
-            .foregroundStyle(.secondary)
-            Text(value).font(Theme.number(26)).foregroundStyle(color).lineLimit(1).minimumScaleFactor(0.6)
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title).font(.system(size: 11.5, weight: .semibold)).foregroundStyle(Theme.soft).lineLimit(1).minimumScaleFactor(0.8)
+            Text(value).font(Theme.number(22)).foregroundStyle(color).lineLimit(1).minimumScaleFactor(0.6)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-        .card(padding: 14)
+        .card(padding: 12)
     }
 }
 
@@ -159,8 +238,8 @@ struct Chip: View {
             .frame(maxWidth: .infinity)
             .frame(height: 34)
             .foregroundStyle(selected ? Theme.onBrand : Theme.ink)
-            .background(selected ? Theme.brand : Theme.raised, in: Capsule(style: .continuous))
-            .contentShape(Capsule(style: .continuous))
+            .background(selected ? Theme.brand : Theme.raised, in: PillShape())
+            .contentShape(PillShape())
         }
         .buttonStyle(.plain)
         .accessibilityAddTraits(selected ? .isSelected : [])
@@ -183,16 +262,16 @@ struct Segments<Value: Hashable>: View {
                         .padding(.horizontal, 6)
                         .frame(maxWidth: .infinity).frame(height: height)
                         .foregroundStyle(on ? Theme.onBrand : Theme.soft)
-                        .background(on ? Theme.brand : Color.clear, in: Capsule(style: .continuous))
-                        .contentShape(Capsule(style: .continuous))
+                        .background(on ? Theme.brand : Color.clear, in: PillShape())
+                        .contentShape(PillShape())
                 }
                 .buttonStyle(.plain)
                 .accessibilityAddTraits(on ? .isSelected : [])
             }
         }
         .padding(4)
-        .background(Theme.surface, in: RoundedRectangle(cornerRadius: height / 2 + 4))
-        .overlay(RoundedRectangle(cornerRadius: height / 2 + 4).strokeBorder(Theme.hairline))
+        .background(Theme.surface, in: PillShape())
+        .overlay(PillShape().strokeBorder(Theme.hairline, style: StrokeStyle(lineWidth: 1, lineJoin: .round)))
         .accessibilityElement(children: .contain)
         .accessibilityLabel(label)
     }
@@ -211,8 +290,8 @@ struct PrimaryButtonStyle: ButtonStyle {
             .padding(.horizontal, 30)
             .frame(maxWidth: wide ? .infinity : nil)
             .frame(height: 50)
-            .background(enabled ? Theme.brand : Theme.track, in: Capsule(style: .continuous))
-            .contentShape(Capsule(style: .continuous))
+            .background(enabled ? Theme.brand : Theme.track, in: PillShape())
+            .contentShape(PillShape())
             .opacity(configuration.isPressed ? 0.85 : 1)
     }
 }
@@ -229,8 +308,8 @@ struct OutlineButtonStyle: ButtonStyle {
             .foregroundStyle(tint)
             .padding(.horizontal, 20)
             .frame(height: height)
-            .overlay(RoundedRectangle(cornerRadius: height / 2).strokeBorder(Theme.outline, lineWidth: 1.5))
-            .contentShape(Capsule(style: .continuous))
+            .overlay(PillShape().strokeBorder(Theme.outline, style: StrokeStyle(lineWidth: 1.5, lineJoin: .round)))
+            .contentShape(PillShape())
             .opacity(configuration.isPressed ? 0.7 : 1)
     }
 }

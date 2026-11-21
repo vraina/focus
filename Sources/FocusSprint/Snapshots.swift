@@ -42,6 +42,8 @@ enum Snapshots {
             Shot(name: "7d-widget-open", size: CGSize(width: 304, height: 240), prepare: { engine.debugPreview("open") },
                  view: { padded(MeterView(engine: engine)) }),
             Shot(name: "3-focus-away", size: window, prepare: { engine.debugPreview("away") }, view: { app(.focus) }),
+            Shot(name: "3b-focus-done", size: window, prepare: { engine.debugPreview("done") }, view: { app(.focus) }),
+            Shot(name: "3c-focus-break", size: window, prepare: { engine.debugPreview("break") }, view: { app(.focus) }),
             Shot(name: "4-history", size: CGSize(width: 1040, height: 900), prepare: { engine.debugPreview("idle") }, view: { app(.history) }),
             Shot(name: "5-parent", size: window, view: { app(.parent) }),
             Shot(name: "5b-apps", size: CGSize(width: 1040, height: 900), prepare: { engine.debugPreview("idle") }, view: { app(.apps) }),
@@ -149,7 +151,8 @@ extension SprintEngine {
         loadAppLabels()
         stopTimerForPreview()
         let now = Date()
-        setPreview(running: mode == "running" || mode == "away" || mode == "open", away: mode.hasPrefix("away"), now: now, openEnded: mode == "open")
+        setPreview(running: mode == "running" || mode == "away" || mode == "open", away: mode.hasPrefix("away"), now: now,
+                   openEnded: mode == "open", done: mode == "done", onBreak: mode == "break")
     }
 }
 #endif
