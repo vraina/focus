@@ -4,19 +4,23 @@
 {% block body %}
 <h1>Households</h1>
 {% if message %}<div class="card" role="status" style="margin-bottom:14px">{{ message }}</div>{% endif %}
-<p class="muted">Someone needs one of these codes to start a new household at <b>{{ signup_url }}</b>. Each code works once.</p>
+<p class="muted">Invite someone to start a new household. They are emailed a link that carries their code. Each code works once.</p>
 <form method="post" class="card row">
   <input type="hidden" name="csrf" value="{{ csrf_token() }}">
-  <input class="field" name="note" placeholder="Who is it for? (optional, only you see this)" style="flex:1;margin:0;min-width:200px">
-  <button class="btn">Create an invitation</button>
+  <label class="sr" for="invite-email">Email of the person to invite</label>
+  <input class="field" id="invite-email" name="email" type="email" required autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Their email address" style="flex:1;margin:0;min-width:200px">
+  <button class="btn">Send invitation</button>
 </form>
 <h2>Invitation codes</h2>
 <div class="stack">
 {% for i in invites %}
   <div class="card row"><span style="font:700 16px ui-monospace,Menlo,monospace;letter-spacing:1px">{{ i._id }}</span>
-    <span class="muted small" style="flex:1">{{ i.note }}</span>
+    <span class="muted small" style="flex:1">{% if i.email %}{{ 'Sent to' if i.sends else 'Not sent yet, for' }} {{ i.email }}{% else %}{{ i.note }}{% endif %}</span>
     {% if i.usedBy %}<span class="pill">Used by {{ i.usedBy }}</span>{% else %}<span class="pill good">Unused</span>
       <a class="small" href="{{ signup_url }}?invite={{ i._id }}">Sign-up link</a>
+      {% if i.email %}<form method="post" style="margin:0"><input type="hidden" name="csrf" value="{{ csrf_token() }}">
+        <input type="hidden" name="action" value="resend"><input type="hidden" name="code" value="{{ i._id }}">
+        <button class="linkbtn plain" aria-label="Send the invitation to {{ i.email }} again">Send again</button></form>{% endif %}
       <form method="post" style="margin:0"><input type="hidden" name="csrf" value="{{ csrf_token() }}">
         <input type="hidden" name="action" value="revoke"><input type="hidden" name="code" value="{{ i._id }}">
         <button class="linkbtn" aria-label="Revoke invitation {{ i._id }}">Revoke</button></form>{% endif %}</div>
@@ -33,5 +37,5 @@
     {% if h.mine %}<span class="muted small">Yours</span>{% else %}<a class="small bad" href="{{ url_for('cancel_household', fid=h.id) }}">Cancel household…</a>{% endif %}</div>
 {% endfor %}
 </div>
-<style>.linkbtn{background:none;border:0;padding:0;font:inherit;font-size:13px;font-weight:650;color:var(--badtext);cursor:pointer} .linkbtn:hover{text-decoration:underline} a.bad{color:var(--badtext);font-weight:650}</style>
+<style>.linkbtn{background:none;border:0;padding:0;font:inherit;font-size:13px;font-weight:650;color:var(--badtext);cursor:pointer} .linkbtn:hover{text-decoration:underline} .linkbtn.plain{color:var(--link)} a.bad{color:var(--badtext);font-weight:650} .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}</style>
 {% endblock %}

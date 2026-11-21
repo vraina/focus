@@ -478,6 +478,10 @@ def register(app, svc):
         or to join an existing one as a co-admin or an adult member."""
         error = None
         values = {"invite": request.args.get("invite", ""), "email": "", "name": ""}
+        if request.method == "GET" and values["invite"]:
+            # Someone following an emailed invitation finds their address already filled in. It can be changed.
+            invited = db["invites"].find_one({"_id": re.sub(r"[^A-Z0-9]", "", values["invite"].upper()), "usedBy": None})
+            values["email"] = (invited or {}).get("email", "")
         if request.method == "POST":
             check_csrf()
             code = re.sub(r"[^A-Z0-9]", "", request.form.get("invite", "").upper())
@@ -819,6 +823,19 @@ def register(app, svc):
     HOUSEHOLD_COLLECTIONS = ("accounts", "members", "devices", "memberInvites", "pairings", "apps", "sites", "events", "media",
                              "requests", "searches", "sprintStarts", "sprintEnds", "usage", "digests")
 
+    INVITE_EMAILS_PER_HOUR = 5
+
+    def send_invitation(invite: dict) -> bool:
+        """Emails an invitation to the address it was made for. At most a few an hour for one invitation."""
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+        if len([t for t in invite.get("sends") or [] if t > cutoff]) >= INVITE_EMAILS_PER_HOUR:
+            return False
+        link = f"{svc.public_url}{url_for('signup')}?invite={invite['_id']}"
+        if not svc.send_email(invite["email"], *mailer.invitation_email(link, invite["_id"])):
+            return False
+        db["invites"].update_one({"_id": invite["_id"]}, {"$push": {"sends": utcnow()}})
+        return True
+
     def owner_only():
         if not request.family.get("serviceOwner") or request.account["role"] != "admin":
             abort(404)
@@ -835,14 +852,26 @@ def register(app, svc):
                 code = re.sub(r"[^A-Z0-9]", "", request.form.get("code", "").upper())
                 gone = db["invites"].delete_one({"_id": code, "usedBy": None}).deleted_count
                 return redirect(url_for("admin", done="revoked" if gone else "kept"))
+            if request.form.get("action") == "resend":
+                code = re.sub(r"[^A-Z0-9]", "", request.form.get("code", "").upper())
+                invite = db["invites"].find_one({"_id": code, "usedBy": None})
+                if not invite or not invite.get("email"):
+                    return redirect(url_for("admin", done="kept"))
+                return redirect(url_for("admin", done="sent" if send_invitation(invite) else "unsent"))
+            email = request.form.get("email", "").strip().lower()
+            if not EMAIL_RE.match(email):
+                return redirect(url_for("admin", done="bademail"))
             code = "".join(secrets.choice(PAIRING_ALPHABET) for _ in range(10))
-            db["invites"].insert_one({"_id": code, "usedBy": None, "createdAt": utcnow(),
-                                      "note": " ".join(request.form.get("note", "").split())[:80]})
-            return redirect(url_for("admin"))
+            invite = {"_id": code, "usedBy": None, "createdAt": utcnow(), "email": email, "sends": []}
+            db["invites"].insert_one(invite)
+            return redirect(url_for("admin", done="sent" if send_invitation(invite) else "unsent"))
         computers_by = {row["_id"]: row["n"] for row in devices.aggregate([{"$match": {"revoked": {"$ne": True}}},
                                                                            {"$group": {"_id": "$familyId", "n": {"$sum": 1}}}])}
         people_by = {row["_id"]: row["n"] for row in members.aggregate([{"$group": {"_id": "$familyId", "n": {"$sum": 1}}}])}
-        notes = {"revoked": "The invitation was revoked. Its code no longer works.",
+        notes = {"sent": "The invitation was emailed.",
+                 "unsent": "The invitation was created, but the email could not be sent. Send the sign-up link yourself, or try Send again.",
+                 "bademail": "Enter the email address of the person you are inviting.",
+                 "revoked": "The invitation was revoked. Its code no longer works.",
                  "kept": "That invitation has already been used, so it was not revoked. Cancel the household instead.",
                  "cancelled": "The household was cancelled and everything it had stored was deleted."}
         # The owner can see that a household exists and how big it is. Never what anyone in it recorded.

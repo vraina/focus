@@ -84,8 +84,9 @@ class World:
     def invite(self):
         """A code for a brand-new household, issued by the service owner."""
         owner, _ = self.sign_in()
-        owner.post("/dashboard/admin", data={"csrf": self.csrf(owner, "/dashboard/admin"), "note": "test"})
-        return self.db["invites"].find_one({"usedBy": None}, sort=[("createdAt", -1)])["_id"]
+        before = {i["_id"] for i in self.db["invites"].find({}, {"_id": 1})}
+        owner.post("/dashboard/admin", data={"csrf": self.csrf(owner, "/dashboard/admin"), "email": "invited@example.com"})
+        return next(i["_id"] for i in self.db["invites"].find({}, {"_id": 1}) if i["_id"] not in before)
 
     def household(self, email, password="family-password-1", name="Pat"):
         """A new household, created the way a real person would: invitation, then sign-up. Returns its admin's browser."""
@@ -190,7 +191,8 @@ def test_sign_up_needs_an_unused_invitation(w):
     assert w.db["members"].find_one({"_id": account["memberId"]})["kind"] == "adult"
     assert not w.db["families"].find_one({"_id": account["familyId"]}).get("serviceOwner")
     # A confirmation email went out; its link confirms the address.
-    link = re.search(r'href="http://localhost(/verify\?t=[^"]+)"', w.emails[-1]["body"]).group(1).replace("&amp;", "&")
+    confirm = [e for e in w.emails if "/verify?t=" in e["body"]][-1]
+    link = re.search(r'href="http://localhost(/verify\?t=[^"]+)"', confirm["body"]).group(1).replace("&amp;", "&")
     assert account["verified"] is False and client.get(link).status_code == 200
     assert w.db["accounts"].find_one({"email": "new@example.com"})["verified"] is True
 
@@ -283,6 +285,37 @@ def test_the_owner_can_revoke_an_unused_invitation_and_cancel_a_household(w):
     assert "dad@example.com" not in after and "mum@example.com" in after
     # The same person can start again with a new invitation.
     w.join(w.invite(), "dad@example.com")
+
+
+def test_an_invitation_is_emailed_with_its_link_and_code(w):
+    owner, _ = w.sign_in()
+    token = lambda: w.csrf(owner, "/dashboard/admin")
+    # No address, or a bad one: nothing is created and nothing is sent.
+    owner.post("/dashboard/admin", data={"csrf": token(), "email": "not an address"})
+    assert w.db["invites"].count_documents({}) == 0 and not w.emails
+    owner.post("/dashboard/admin", data={"csrf": token(), "email": " New.Parent@Example.com "})
+    invite = w.db["invites"].find_one({})
+    code = invite["_id"]
+    assert invite["email"] == "new.parent@example.com" and len(invite["sends"]) == 1
+    mail = w.emails[-1]
+    assert mail["to"] == "new.parent@example.com" and code in mail["body"] and f"/signup?invite={code}" in mail["body"]
+    page = owner.get("/dashboard/admin").get_data(as_text=True)
+    assert "Sent to new.parent@example.com" in page and "Send again" in page
+    # Following the link finds the address filled in.
+    assert 'value="new.parent@example.com"' in w.browser().get(f"/signup?invite={code}").get_data(as_text=True)
+    # Send again goes to the same address, with the same code, and only a few times an hour.
+    for _ in range(6):
+        owner.post("/dashboard/admin", data={"csrf": token(), "action": "resend", "code": code})
+    sent = [m for m in w.emails if m["to"] == "new.parent@example.com"]
+    assert len(sent) == 5 and all(code in m["body"] for m in sent)
+    # Another household's admin cannot send invitations.
+    dad = w.household("dad@example.com")
+    assert dad.post("/dashboard/admin", data={"csrf": w.csrf(dad, "/dashboard"), "email": "x@example.com"}).status_code == 404
+    # Once used, an invitation cannot be sent again.
+    w.join(code, "new.parent@example.com")
+    before = len(w.emails)
+    owner.post("/dashboard/admin", data={"csrf": token(), "action": "resend", "code": code})
+    assert len([m for m in w.emails[before:] if "invitation" in m["subject"].lower()]) == 0
 
 
 # --- Roles: admin, co-admin, kids and other adults ------------------------------------------------------
@@ -584,7 +617,7 @@ def test_requests_are_reviewed_per_member(w):
     assert ask("instagram.com", "Physics lecture").json["answer"]["decision"] == "deny"
     assert ask("instagram.com", "Physics lecture", headers=leo_mac).json["answer"]["decision"] == "approve_temporary"
     assert w.reviews[-1]["history"] == 0
-    assert all("Confirm" in e["subject"] for e in w.emails)  # no email per request
+    assert all("Confirm" in e["subject"] or "invitation" in e["subject"] for e in w.emails)  # no email per request
 
 
 def test_searches_keep_words_only_for_distractions(w):

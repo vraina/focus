@@ -99,6 +99,20 @@ def installer_email(link: str) -> tuple[str, str]:
                           "Download for Mac", link, "You asked for this link during setup. Nothing is ever blocked: the app records and shows."))
 
 
+def invitation_email(link: str, code: str) -> tuple[str, str]:
+    """An invitation to start a household, sent by the service owner. The link carries the code, and the
+    code is shown as well for anyone who opens the sign-up page by hand."""
+    e = html.escape
+    return ("Your invitation to YoungWonks Focus",
+            f'''<div style="font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;font-size:15px;color:#1a1a1a;max-width:520px">
+<h2 style="margin:0 0 8px">You are invited to YoungWonks Focus</h2>
+<p>YoungWonks Focus shows where time on a Mac goes, so a kid can see it and a parent can too. Nothing is ever blocked: the app records and shows.</p>
+<p style="margin:18px 0"><a href="{e(link)}" style="background:#5e57f0;color:#ffffff;text-decoration:none;font-weight:700;padding:12px 22px;border-radius:99px;display:inline-block">Create your household</a></p>
+<p>Your invitation code, if the page asks for it:</p>
+<p style="font:700 28px/1.2 ui-monospace,Menlo,monospace;letter-spacing:3px;margin:8px 0 14px">{e(code)}</p>
+<p style="color:#666;font-size:13px">The code works once. If the button does not open, copy this address into a browser:<br>{e(link)}</p></div>''')
+
+
 def code_email(code: str, name: str, expires: str) -> tuple[str, str]:
     """The pairing code from the setup wizard, for a parent who is not next to the Mac. The code itself is
     unchanged by being emailed: it still works once and expires when it would have anyway."""
