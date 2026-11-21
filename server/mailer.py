@@ -91,6 +91,14 @@ def verification_email(link: str) -> tuple[str, str]:
                           "Confirm my email", link, "If you did not create a YoungWonks Focus account, you can ignore this email."))
 
 
+def installer_email(link: str) -> tuple[str, str]:
+    return ("Your YoungWonks Focus installer link",
+            _button_email("Install YoungWonks Focus on the Mac",
+                          "Open this email on the Mac your kid uses, signed in as an administrator, then download and open the installer. "
+                          "When the app is open, go back to setup on the website to link the Mac with a code.",
+                          "Download for Mac", link, "You asked for this link during setup. Nothing is ever blocked: the app records and shows."))
+
+
 def reset_email(link: str) -> tuple[str, str]:
     return ("Choose a new password for YoungWonks Focus",
             _button_email("Choose a new password", "Use the button below to set a new password. The link works for one hour.",

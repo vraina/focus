@@ -243,7 +243,10 @@ def create_app(db=None, classify=classifier.classify, review=classifier.review_r
         token = secrets.token_urlsafe(32)
         name = " ".join(str(body.get("name") or "").split())[:80] or "Mac"
         login = " ".join(str(body.get("login") or "").split())[:60] or "user"
-        devices.insert_one({"_id": uuid.uuid4().hex, "familyId": member["familyId"], "name": name, "tokenHash": token_hash(token),
+        device_id = uuid.uuid4().hex
+        # Remembered on the used code so the website can say which computer it linked (the setup wizard waits for this).
+        db["pairings"].update_one({"_id": pairing["_id"]}, {"$set": {"deviceId": device_id, "deviceName": name}})
+        devices.insert_one({"_id": device_id, "familyId": member["familyId"], "name": name, "tokenHash": token_hash(token),
                             "pairedAt": now(), "lastSeenAt": now(), "revoked": False,
                             "logins": {child_key(login): {"login": login, "memberId": member["_id"], "firstSeen": now(),
                                                           "assignedAt": now(), "assignedBy": "code"}}})

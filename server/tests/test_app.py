@@ -89,7 +89,9 @@ class World:
 
     def household(self, email, password="family-password-1", name="Pat"):
         """A new household, created the way a real person would: invitation, then sign-up. Returns its admin's browser."""
-        return self.join(self.invite(), email, password, name)
+        admin = self.join(self.invite(), email, password, name)
+        admin.get("/dashboard")  # the very first visit opens setup by itself; the tests begin after that
+        return admin
 
     def join(self, code, email, password="family-password-1", name="Sam"):
         client = self.browser()
@@ -195,7 +197,9 @@ def test_sign_up_needs_an_unused_invitation(w):
 
 def test_sign_in_sign_out_and_lockout(w):
     client, response = w.sign_in()
-    assert response.status_code == 302 and client.get("/dashboard").status_code == 200
+    assert response.status_code == 302
+    assert client.get("/dashboard").headers["Location"].endswith("/setup")  # a new household's first visit opens setup, once
+    assert client.get("/dashboard").status_code == 200
     client.post("/logout", data={"csrf": w.csrf(client, "/dashboard")})
     assert client.get("/dashboard").status_code == 302
     # A sign-in form posted without the page's token is refused.
@@ -945,13 +949,13 @@ def test_setup_reminders_follow_the_real_records(w):
     assert "Three steps left" in first and "Next: add your kids" in first and "Distraction for the day" in first
     for path in ("/dashboard/apps", "/dashboard/sites", "/dashboard/people", "/dashboard/computers", "/dashboard/settings"):
         assert "Finish setup · 0 of 3" in page(path=path)
-    assert admin.get("/setup").headers["Location"].endswith("/dashboard/people")  # opens at the first unfinished step
+    assert admin.get("/setup").headers["Location"].endswith("/setup/welcome")  # opens at the first unfinished step
     # A kid exists: step 1 is done, the next step is installing.
     kid = w.add_kid(admin, "Mia")
     after_kid = page()
     assert "Setup · 1 of 3 steps done" in after_kid and "Two steps left" in after_kid and "Next: install the app on the Mac" in after_kid
     assert "Finish setup · 1 of 3" in after_kid and card in after_kid and "Mia" in after_kid
-    assert admin.get("/setup").headers["Location"].endswith("/dashboard/computers")
+    assert admin.get("/setup").headers["Location"].endswith("/setup/install")
     # A computer is linked: with a kid and a computer, setup is complete and both reminders are gone.
     mac = w.pair(admin, kid, name="Mia's Mac")
     done = page()
@@ -986,3 +990,112 @@ def test_only_the_household_admin_sees_setup(w):
     w.pair(other, w.add_kid(other, "Zed"), name="Zed's Mac")
     old_way = other.get("/dashboard").get_data(as_text=True)
     assert all(x not in old_way for x in ("Finish setup", "Continue setup", "Start setup", "Setup ·", 'class="card remind"'))
+
+
+def test_the_wizard_walks_through_kids_install_and_link(w):
+    admin = w.join(w.invite(), "mum@example.com", name="Pat")  # joined, never landed on the site yet
+    wizard = lambda step, **q: admin.get(f"/setup/{step}", query_string=q)
+    post = lambda step, **data: admin.post(f"/setup/{step}", data={"csrf": w.csrf(admin, "/setup/welcome"), **data})
+    # The first landing opens the wizard by itself, once; Exit and Skip go to Activity, which then stays put.
+    assert admin.get("/dashboard").headers["Location"].endswith("/setup")
+    assert admin.get("/setup").headers["Location"].endswith("/setup/welcome")
+    welcome = wizard("welcome").get_data(as_text=True)
+    assert "Let's set up your household" in welcome and "Exit setup" in welcome and "Skip for now" in welcome
+    assert 'aria-label="Main"' not in welcome and "Sign out" not in welcome  # the wizard takes over: no main navigation
+    assert "Nothing is ever blocked" in welcome
+    assert admin.get("/dashboard").status_code == 200
+    # Later steps cannot be opened before a kid exists.
+    assert wizard("install").headers["Location"].endswith("/setup/kids") and wizard("link").headers["Location"].endswith("/setup/kids")
+    assert wizard("done").headers["Location"].endswith("/setup/link") or wizard("done").headers["Location"].endswith("/setup/kids")
+    assert post("welcome").headers["Location"].endswith("/setup/kids")
+    assert admin.get("/setup").headers["Location"].endswith("/setup/kids")  # started: no need to see Welcome again
+    # Step 1: the same rules as "Add a kid" on the People page. Cannot continue with nobody.
+    assert post("kids", action="next").status_code == 400 and post("kids", action="add", name="   ").status_code == 400
+    assert post("kids", action="add", name="  Mia  ").status_code == 302 and post("kids", action="add", name="L" * 60).status_code == 302
+    kids = {k["name"]: k["_id"] for k in w.db["members"].find({"kind": "kid"})}
+    assert set(kids) == {"Mia", "L" * 40} and "Mia" in admin.get("/dashboard/people").get_data(as_text=True)
+    page = wizard("kids").get_data(as_text=True)
+    assert "Remove Mia" in page and "Next: install the app" in page
+    assert post("kids", action="remove", member=kids["L" * 40]).status_code == 302  # a kid added by mistake
+    assert w.db["members"].count_documents({"kind": "kid"}) == 1
+    assert post("kids", action="next").headers["Location"].endswith("/setup/install")
+    # Step 2: the existing installer download; "The app is installed" is remembered for the household.
+    install = wizard("install").get_data(as_text=True)
+    assert 'href="https://example.com/YoungWonksFocus.pkg"' in install and "Copy link" in install and "Email it to me" in install
+    assert ">https://example.com/YoungWonksFocus.pkg<" in install  # the link is plain selectable text too
+    assert 'type="email"' not in install and 'name="email"' not in install  # no field for another address
+    assert "Finish setup · 1 of 3" in admin.get("/dashboard").get_data(as_text=True)
+    assert post("install", action="installed").headers["Location"].endswith("/setup/link")
+    assert "Finish setup · 2 of 3" in admin.get("/dashboard").get_data(as_text=True)
+    # Step 3: a real pairing code, shown as plain text, for the kid chosen.
+    link = wizard("link").get_data(as_text=True)
+    code = re.search(r'id="thecode">([A-Z0-9]{4}-[A-Z0-9]{4})<', link).group(1)
+    raw = code.replace("-", "")
+    stored = w.db["pairings"].find_one({"_id": raw})
+    assert stored["memberId"] == kids["Mia"] and not stored["used"] and "Code for Mia's login" in link and "Copy code" in link
+    assert "Waiting for the Mac" in link and "I've typed the code" in link
+    # The same code is on the Computers page: one code maker, one live code.
+    assert code in admin.get("/dashboard/computers").get_data(as_text=True)
+    status = lambda who=admin, c=raw: who.get("/setup/code-status", query_string={"code": c})
+    assert status().json == {"state": "waiting"}
+    assert post("link", action="typed", member=kids["Mia"]).headers["Location"].endswith(f"/setup/link?member={kids['Mia']}&waiting=1")
+    assert "has not linked yet" in wizard("link", member=kids["Mia"], waiting=1).get_data(as_text=True)
+    # The Mac types the code: the endpoint says so, with the computer's name, and Finished opens.
+    reply = w.browser().post("/api/pair", json={"code": code, "name": "Mia's MacBook", "login": "mia"})
+    assert reply.status_code == 200
+    assert status().json == {"state": "used", "device": "Mia's MacBook"}
+    assert post("link", action="typed", member=kids["Mia"]).headers["Location"].split("?")[0].endswith("/setup/done")
+    done = wizard("done").get_data(as_text=True)
+    assert "Mia&#39;s MacBook is linked" in done and "Go to Activity" in done and "Setup complete" in done
+    home = admin.get("/dashboard").get_data(as_text=True)
+    assert "Finish setup" not in home and "Continue setup" not in home
+    # Another kid with no computer is offered a link, which goes back to step 3 for that kid with a new code.
+    post("kids", action="add", name="Leo")
+    leo = w.db["members"].find_one({"name": "Leo"})["_id"]
+    done = wizard("done").get_data(as_text=True)
+    assert "Link Leo's computer" in done and f"/setup/link?member={leo}" in done
+    again = wizard("link", member=leo).get_data(as_text=True)
+    assert "Code for Leo's login" in again and w.db["pairings"].find_one({"used": False})["memberId"] == leo
+    # A kid with a computer cannot be removed from the wizard.
+    assert post("kids", action="remove", member=kids["Mia"]).status_code == 400 and w.db["members"].find_one({"_id": kids["Mia"]})
+
+
+def test_the_code_used_endpoint_only_answers_its_maker(w):
+    admin = w.household("mum@example.com")
+    kid = w.add_kid(admin, "Mia")
+    admin.get("/setup/link")
+    raw = w.db["pairings"].find_one({"used": False})["_id"]
+    ask = lambda who, code=raw: who.get("/setup/code-status", query_string={"code": code})
+    assert ask(admin).json == {"state": "waiting"} and ask(admin, raw.lower()[:4] + " " + raw[4:]).json == {"state": "waiting"}
+    assert ask(admin, "ZZZZZZZZ").json == {"state": "none"} and ask(admin, "").json == {"state": "none"}
+    # Signed out: sent to sign in. Another household, or a co-admin of the same one: told nothing about the code.
+    assert ask(w.browser()).status_code == 302
+    assert ask(w.household("pat@example.com")).json == {"state": "none"}
+    co = w.join(w.invite_adult(admin, "Dad", role="coadmin"), "dad@example.com", name="Dad")
+    assert ask(co).json == {"state": "none"}
+    # Expired: said so, and never "used".
+    w.db["pairings"].update_one({"_id": raw}, {"$set": {"expiresAt": "2020-01-01T00:00:00Z"}})
+    assert ask(admin).json == {"state": "expired"}
+    assert w.browser().post("/api/pair", json={"code": raw, "name": "x", "login": "x"}).status_code == 400  # codes keep their expiry
+    assert "Get a different code" in admin.get(f"/setup/link?member={kid}").get_data(as_text=True)  # a fresh one is made on opening
+
+
+def test_the_installer_link_is_emailed_only_to_the_signed_in_parent(w):
+    admin = w.household("mum@example.com")
+    w.add_kid(admin, "Mia")
+    send = lambda **extra: admin.post("/setup/install", data={"csrf": w.csrf(admin, "/setup/install"), "action": "email", **extra})
+    before = len(w.emails)
+    reply = send(email="someone-else@example.com", to="someone-else@example.com")  # extra fields are ignored
+    assert reply.status_code == 200 and "Sent to mum@example.com" in reply.get_data(as_text=True)
+    sent = w.emails[before:]
+    assert len(sent) == 1 and sent[0]["to"] == "mum@example.com" and "https://example.com/YoungWonksFocus.pkg" in sent[0]["body"]
+    assert "installer" in sent[0]["subject"].lower() and "blocked" not in sent[0]["body"].lower().replace("nothing is ever blocked", "")
+    # Rate-limited: three an hour for the household, then a plain refusal and nothing sent.
+    assert send().status_code == 200 and send().status_code == 200
+    refused = send()
+    assert refused.status_code == 400 and "try again in an hour" in refused.get_data(as_text=True) and len(w.emails) == before + 3
+    # Without the form token nothing is sent; a co-admin has no wizard to send from.
+    assert admin.post("/setup/install", data={"action": "email"}).status_code == 303 and len(w.emails) == before + 3
+    co = w.join(w.invite_adult(admin, "Dad", role="coadmin"), "dad@example.com", name="Dad")
+    assert co.post("/setup/install", data={"csrf": w.csrf(co, "/dashboard"), "action": "email"}).headers["Location"].endswith("/dashboard")
+    assert sum(1 for e in w.emails if "installer" in e["subject"].lower()) == 3 and all(e["to"] == "mum@example.com" for e in w.emails if "installer" in e["subject"].lower())

@@ -286,17 +286,151 @@ def register(app, svc):
                          "next": upcoming, "kids": kids, "computers": computers, "installed": installed}
         return g.setup_state
 
+    WIZARD_STEPS = ("welcome", "kids", "install", "link", "done")
+    INSTALL_EMAILS_PER_HOUR = 3
+
+    def installer_url() -> str:
+        """The same download the Computers page links to; empty when no installer has been published."""
+        return os.environ.get("DOWNLOAD_URL", "") or (svc.latest_release() or {}).get("url", "")
+
+    def first_open_step(state: dict) -> str:
+        if not state["kids"]:
+            return "kids" if (request.family.get("setup") or {}).get("started") else "welcome"
+        return state["next"]["key"] if state["next"] else "done"
+
     @app.get("/setup")
     @signed_in
     def setup():
-        """Opens setup at the first unfinished step. Until the wizard's own screens exist, that is the page
-        where the step is done today."""
+        """Opens setup at the first unfinished step."""
         state = setup_state()
         if state is None or state["complete"]:
             return redirect(url_for("overview"))
-        return redirect(url_for("people") if state["next"]["key"] == "kids" else url_for("computers"))
+        return redirect(url_for("setup_step", step=first_open_step(state)))
+
+    def kid_rows() -> list[dict]:
+        """The household's kids, with whether each has a computer and whether it is still safe to remove them
+        here (only a kid added by mistake: no computer linked and nothing recorded)."""
+        fid = request.family["_id"]
+        linked = {e.get("memberId") for d in devices.find({"familyId": fid, "revoked": {"$ne": True}}) for e in (d.get("logins") or {}).values()}
+        rows = []
+        for m in members.find({"familyId": fid, "kind": "kid"}).sort("name", 1):
+            used = m["_id"] in linked or db["sprintStarts"].find_one({"memberId": m["_id"]}, {"_id": 1}) is not None
+            rows.append({"id": m["_id"], "name": m.get("name", "Kid"), "linked": m["_id"] in linked, "removable": not used})
+        return rows
+
+    @app.route("/setup/<any(welcome, kids, install, link, done):step>", methods=["GET", "POST"])
+    @signed_in
+    def setup_step(step):
+        """The first-time setup wizard. It adds nothing the site could not already do: each step uses the same
+        actions as the People and Computers pages. Only the household admin gets it."""
+        state = setup_state()
+        if state is None:
+            return redirect(url_for("overview"))
+        account, family, fid = request.account, request.family, request.family["_id"]
+        families.update_one({"_id": fid}, {"$set": {"setup.seen": True}})
+        message = error = None
+
+        if request.method == "POST":
+            check_csrf()
+            action = request.form.get("action", "")
+            if step == "welcome":
+                families.update_one({"_id": fid}, {"$set": {"setup.started": True}})
+                return redirect(url_for("setup_step", step="kids"))
+            if step == "kids":
+                families.update_one({"_id": fid}, {"$set": {"setup.started": True}})
+                if action == "add":
+                    name = clean_name(request.form.get("name"), "")
+                    if name:
+                        new_member(db, fid, name, "kid")  # exactly what "Add a kid" on the People page does
+                        return redirect(url_for("setup_step", step="kids"))
+                    error = "Enter a first name."
+                elif action == "remove":
+                    kid = next((k for k in kid_rows() if k["id"] == request.form.get("member")), None)
+                    if kid and kid["removable"]:
+                        members.delete_one({"_id": kid["id"], "familyId": fid, "kind": "kid"})
+                        return redirect(url_for("setup_step", step="kids"))
+                    error = "That kid already has a computer or records, so they cannot be removed here. You can rename them on the People page."
+                elif action == "next":
+                    if members.count_documents({"familyId": fid, "kind": "kid"}):
+                        return redirect(url_for("setup_step", step="install"))
+                    error = "Add at least one kid to carry on."
+            elif step == "install":
+                if action == "installed":
+                    families.update_one({"_id": fid}, {"$set": {"setup.installed": True}})
+                    return redirect(url_for("setup_step", step="link"))
+                if action == "email":
+                    link = installer_url()
+                    hour_ago = (datetime.now(timezone.utc) - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+                    recent = [t for t in (family.get("setup") or {}).get("emails", []) if t > hour_ago]
+                    if not link:
+                        error = "The installer isn't available yet, so there is no link to send."
+                    elif len(recent) >= INSTALL_EMAILS_PER_HOUR:
+                        error = "That link has been emailed a few times already. Check your inbox, or try again in an hour."
+                    else:
+                        # Only ever to the signed-in parent's own address: there is no field for another one.
+                        sent = svc.send_email(account["email"], *mailer.installer_email(link))
+                        families.update_one({"_id": fid}, {"$set": {"setup.emails": recent + [utcnow()]}})
+                        if sent:
+                            message = f"Sent to {account['email']}. Open it on the Mac."
+                        else:
+                            error = "The email could not be sent just now. Use Copy link instead."
+            elif step == "link":
+                if action == "code":
+                    make_pairing_code(request.form.get("member", ""))  # the Computers page's own code maker
+                    return redirect(url_for("setup_step", step="link", member=request.form.get("member", "")))
+                if action == "typed":
+                    return redirect(url_for("setup_step", step="done" if setup_devices() else "link", member=request.form.get("member", ""), waiting=1))
+            g.setup_state = None
+            state = setup_state()
+
+        # A step cannot be opened before the ones it depends on.
+        if step in ("install", "link") and not state["kids"]:
+            return redirect(url_for("setup_step", step="kids"))
+        if step == "done" and not state["computers"]:
+            return redirect(url_for("setup_step", step="link"))
+
+        kids = kid_rows() if step in ("kids", "link", "done") else []
+        ctx: dict = {}
+        if step == "link":
+            picked = next((k for k in kids if k["id"] == request.args.get("member")), None) \
+                or next((k for k in kids if not k["linked"]), kids[0])
+            pairing = db["pairings"].find_one({"createdBy": account["_id"], "memberId": picked["id"], "used": False, "expiresAt": {"$gt": utcnow()}})
+            if pairing is None and request.method == "GET" and not request.args.get("waiting"):
+                pairing = make_pairing_code(picked["id"])  # opening the step shows a code straight away
+            ctx = {"picked": picked, "minutes": PAIRING_MINUTES, "still_waiting": bool(request.args.get("waiting")),
+                   "code": f"{pairing['_id'][:4]}-{pairing['_id'][4:]}" if pairing else "", "raw_code": pairing["_id"] if pairing else "",
+                   "expires": pairing["expiresAt"] if pairing else ""}
+        elif step == "done":
+            newest = devices.find_one({"familyId": fid, "revoked": {"$ne": True}}, sort=[("pairedAt", -1)])
+            names = {m["_id"]: m.get("name", "") for m in members.find({"familyId": fid})}
+            first_login = next(iter((newest.get("logins") or {}).values()), {})
+            ctx = {"computer": newest.get("name", "Mac"), "whose": names.get(first_login.get("memberId"), ""),
+                   "unlinked": [k for k in kids if not k["linked"]]}
+        rail = [{"n": x["n"], "done": x["done"],
+                 "title": {"kids": "Add your kids", "install": "Install the app", "link": "Link the Mac"}[x["key"]],
+                 "detail": x["detail"], "key": x["key"]} for x in state["steps"]]
+        index = WIZARD_STEPS.index(step)
+        return render_template("wizard.html", step=step, index=index, rail=rail, state=state, kids=kids, message=message, error=error,
+                               download_url=installer_url(), my_email=account["email"], **ctx), (400 if error else 200)
+
+    def setup_devices() -> bool:
+        return devices.count_documents({"familyId": request.family["_id"], "revoked": {"$ne": True}}) > 0
+
+    @app.get("/setup/code-status")
+    @signed_in
+    def setup_code_status():
+        """Has this code been typed into the app yet? The link step asks every few seconds so it can move on by
+        itself. Only the person who made the code can ask about it."""
+        code = re.sub(r"[^A-Z0-9]", "", request.args.get("code", "").upper())
+        pairing = db["pairings"].find_one({"_id": code, "createdBy": request.account["_id"]}) if code else None
+        if pairing is None:
+            return {"state": "none"}
+        if pairing.get("used"):
+            return {"state": "used", "device": pairing.get("deviceName", "")}
+        return {"state": "expired" if pairing["expiresAt"] <= utcnow() else "waiting"}
 
     svc.signed_in, svc.check_csrf, svc.is_admin = signed_in, check_csrf, is_admin
+    svc.setup_state = setup_state
     app.jinja_env.globals.update(setup_state=setup_state)
     app.jinja_env.globals.update(csrf_token=csrf_token, current_account=current_account, is_admin=is_admin,
                                  service_owner=lambda a: bool((families.find_one({"_id": a["familyId"]}) or {}).get("serviceOwner")))
@@ -520,18 +654,23 @@ def register(app, svc):
                                code_for=next((c["label"] for c in choices if code and c["id"] == code["memberId"]), ""),
                                download_url=os.environ.get("DOWNLOAD_URL", "") or release.get("url", ""), latest=release.get("version", ""))
 
-    @app.post("/dashboard/computers/code")
-    @signed_in
-    def new_pairing_code():
-        check_csrf()
-        member_id = request.form.get("member") or request.account["memberId"]
+    def make_pairing_code(member_id: str) -> dict:
+        """A new one-time code for one person's Mac login. The Computers page and the setup wizard both use this."""
         if member_id not in {c["id"] for c in assignable()}:
             abort(403)  # nobody can link a computer or a login to someone they are not responsible for
         db["pairings"].delete_many({"createdBy": request.account["_id"], "used": False})  # one live code at a time
         code = "".join(secrets.choice(PAIRING_ALPHABET) for _ in range(8))
         expires = (datetime.now(timezone.utc) + timedelta(minutes=PAIRING_MINUTES)).strftime("%Y-%m-%dT%H:%M:%SZ")
-        db["pairings"].insert_one({"_id": code, "familyId": request.family["_id"], "memberId": member_id, "createdBy": request.account["_id"],
-                                   "used": False, "expiresAt": expires, "createdAt": utcnow()})
+        pairing = {"_id": code, "familyId": request.family["_id"], "memberId": member_id, "createdBy": request.account["_id"],
+                   "used": False, "expiresAt": expires, "createdAt": utcnow()}
+        db["pairings"].insert_one(pairing)
+        return pairing
+
+    @app.post("/dashboard/computers/code")
+    @signed_in
+    def new_pairing_code():
+        check_csrf()
+        make_pairing_code(request.form.get("member") or request.account["memberId"])
         return redirect(url_for("computers"))
 
     @app.post("/dashboard/computers/<device_id>/assign")

@@ -5,7 +5,7 @@ an adult member sees only themselves. Every query below is narrowed to those mem
 """
 from datetime import datetime, timedelta, timezone
 
-from flask import Response, abort, render_template, request, url_for
+from flask import Response, abort, render_template, request, url_for, redirect
 
 DECISION_LABEL = {"approve_temporary": "Approved for a while", "approve_permanent": "Approved for good", "deny": "Not approved"}
 STATE_LABEL = {"productive": "Productive", "distraction": "Distraction", "allowed": "Always allowed",
@@ -142,6 +142,12 @@ def register(app, svc, keep_days: int = 14):
     @signed_in
     def overview():
         """The front page: today's activity. (There used to be a separate list of days here.)"""
+        # The first time a household's admin lands here with setup unfinished, setup opens by itself. After that
+        # it is only a reminder: Exit and Skip both come back to this page.
+        state = svc.setup_state()
+        if state and not state["complete"] and not (request.family.get("setup") or {}).get("seen"):
+            db["families"].update_one({"_id": request.family["_id"]}, {"$set": {"setup.seen": True}})  # once only
+            return redirect(url_for("setup"))
         return day_view(datetime.now(zone()).strftime("%Y-%m-%d"))
 
     def four_weeks(view: dict, selected: str) -> dict:
