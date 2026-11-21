@@ -41,8 +41,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         presence = timer
         NSApp.activate(ignoringOtherApps: true)
         #if DEBUG
-        // Development only: FOCUSSPRINT_AUTOSTART=<minutes> starts a sprint without touching the UI.
         let env = ProcessInfo.processInfo.environment
+        // Development only: FOCUSSPRINT_SELFSHOT=<file.png> saves a picture of the real main window, frame and
+        // window buttons included, a few seconds after launch. (Snapshots draw screens without a window.)
+        if let path = env["FOCUSSPRINT_SELFSHOT"] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                guard let window = NSApp.windows.first(where: { $0.title == "YoungWonks Focus" }),
+                      let frame = window.contentView?.superview,
+                      let rep = frame.bitmapImageRepForCachingDisplay(in: frame.bounds) else { return }
+                frame.cacheDisplay(in: frame.bounds, to: rep)
+                try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path))
+                let close = window.standardWindowButton(.closeButton).map { $0.convert($0.bounds, to: nil) } ?? .zero
+                FileHandle.standardError.write(Data("selfshot: fullSize=\(window.styleMask.contains(.fullSizeContentView)) titleHidden=\(window.titleVisibility == .hidden) transparent=\(window.titlebarAppearsTransparent) layout=\(window.contentLayoutRect) frame=\(window.frame.size) close=\(close)\n".utf8))
+            }
+        }
+        // Development only: FOCUSSPRINT_AUTOSTART=<minutes> starts a sprint without touching the UI.
         if let minutes = env["FOCUSSPRINT_AUTOSTART"].flatMap(Int.init) {
             let apps = (env["FOCUSSPRINT_ALLOW"] ?? "").split(separator: ",").map { AllowedApp(bundleId: String($0), name: String($0)) }
             SprintEngine.shared.startSprint(task: "Dev test sprint", minutes: minutes, allowedApps: apps,
