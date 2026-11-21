@@ -4,6 +4,23 @@
 {% block head %}
 <style>
 .page{display:flex;flex-direction:column;gap:16px}
+/* The setup reminder, shown to a household admin until a kid exists and a computer is linked. */
+.remind{background:var(--brand-tint);border:1.5px solid var(--brand);border-radius:28px;padding:36px;display:flex;gap:32px;flex-wrap:wrap;align-items:center}
+.remind .say{flex:1 1 420px;min-width:0;display:flex;flex-direction:column;gap:14px}
+.remind .rh{margin:0;font-family:var(--display);font-size:52px;line-height:1.02;letter-spacing:-2px;font-weight:700;text-transform:none;color:var(--ink)}
+.remind p{margin:0;font-size:17px;color:var(--soft);max-width:520px}
+.remind .go{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-top:6px;font-size:14px;color:var(--soft)}
+.remind .cta{display:inline-flex;align-items:center;height:56px;padding:0 32px;border-radius:99px;background:var(--brand);color:var(--on-brand);font-size:17px;font-weight:700}
+.remind .cta:hover{text-decoration:none;filter:brightness(1.08)}
+.checks{flex:1 1 360px;min-width:0;display:flex;flex-direction:column;gap:8px;list-style:none;margin:0;padding:0}
+.checks li{display:flex;align-items:center;gap:14px;background:var(--surface);border:1.5px solid transparent;border-radius:18px;padding:16px 18px}
+.checks li.next{border-color:var(--brand)}
+.checks .mark{width:34px;height:34px;flex:none;border-radius:50%;display:flex;align-items:center;justify-content:center;font-family:var(--display);font-weight:700;border:1.5px solid var(--line);color:var(--soft)}
+.checks li.done .mark{background:var(--good-fill);border-color:var(--good-fill);color:var(--on-brand)} .checks li.next .mark{background:var(--brand);border-color:var(--brand);color:var(--on-brand)}
+.checks .what{flex:1;min-width:0;display:flex;flex-direction:column} .checks .what b{font-size:16px} .checks .what span{font-size:14px;color:var(--soft)}
+.checks li.todo .what b{color:var(--soft)}
+.ghostcard{box-sizing:border-box;border:1.5px dashed var(--line);border-radius:24px;padding:26px;display:flex;flex-direction:column;gap:6px;justify-content:center}
+.ghostcard b{font-family:var(--display);font-size:20px} .ghostcard span{color:var(--soft)}
 .cols{display:flex;gap:16px;flex-wrap:wrap;align-items:stretch}
 .head{display:flex;align-items:flex-end;gap:16px;flex-wrap:wrap;margin-bottom:4px} .head .left{flex:1;min-width:260px}
 .head h1{margin:4px 0 0}
@@ -100,7 +117,10 @@ html{scroll-padding-top:20px;scroll-behavior:smooth}
 .switch .info .when2{display:none} .datenav .date .short{display:none}
 @media (max-width:760px){
   /* On a phone the day reads: summary, timeline, four weeks, then the rest. */
+  .remind{padding:22px;border-radius:22px;gap:18px;order:0} .remind .rh{font-size:32px;letter-spacing:-1.2px} .remind p{font-size:15px}
+  .remind .cta{height:52px;width:100%;justify-content:center} .remind .say,.checks{flex-basis:100%} .ghostcard{min-height:110px!important;flex:none!important}
   .cols{display:contents} .sum,.fourweeks,.third{flex:none} .page>*,.third{order:5} .head,.page>p,.page>.row{order:0} .sum{order:1} .timeline{order:2} .fourweeks{order:3}
+  .page>.remind{order:-1} .ghostcard{order:5}
   .page{gap:14px} .head{display:block} .head h1{font-size:48px;letter-spacing:-2px;margin:12px 0 14px}
   .datenav{flex-wrap:nowrap;gap:6px;margin-bottom:0} .datenav .date{flex:1;text-align:center;font-size:13px;letter-spacing:1.2px}
   .datenav .date .long{display:none} .datenav .date .short{display:inline}
@@ -130,6 +150,30 @@ html{scroll-padding-top:20px;scroll-behavior:smooth}
 {% set arrow_left %}<svg aria-hidden="true" width="8" height="14" viewBox="0 0 8 14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 1.5L1.5 7l5 5.5"/></svg>{% endset %}
 {% set arrow_right %}<svg aria-hidden="true" width="8" height="14" viewBox="0 0 8 14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1.5 1.5l5 5.5-5 5.5"/></svg>{% endset %}
 <div class="page">
+{% set setup = setup_state() %}
+{% set unfinished = setup and not setup.complete %}
+{% if unfinished %}
+<section class="card remind" aria-label="Setup">
+  <div class="say">
+    <div class="eyebrow">Setup · {{ setup.done }} of 3 steps done</div>
+    <h2 class="rh">{{ {1: 'One step', 2: 'Two steps', 3: 'Three steps'}[setup.left] if setup.left else 'One step' }} left before you see {{ 'any activity' if not setup.computers else "your kids' activity" }}</h2>
+    <p>{% if not setup.computers %}No computer is linked yet, so there is nothing to show.{% else %}A computer is linked, but no kid has been added yet.{% endif %}
+      {{ 'Pick up where you left off: it takes about three minutes.' if setup.done else 'It takes about five minutes.' }}</p>
+    <div class="go">
+      <a class="cta" href="{{ url_for('setup') }}">{{ 'Continue setup' if setup.done else 'Start setup' }}</a>
+      {% if setup.next %}<span>Next: {{ setup.next.next }}</span>{% endif %}
+    </div>
+  </div>
+  <ol class="checks">
+    {% for x in setup.steps %}
+    <li class="{{ x.state }}">
+      <span class="mark">{% if x.done %}<svg role="img" aria-label="Done" width="15" height="15" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 7.5l3 3 6-7"/></svg>{% else %}{{ x.n }}{% endif %}</span>
+      <span class="what"><b>{{ x.title }}</b><span>{{ x.detail if x.done else ('Next step' if x.state == 'next' else 'Not started') }}</span></span>
+    </li>
+    {% endfor %}
+  </ol>
+</section>
+{% endif %}
 
 <div class="head">
   <div class="left">
@@ -163,6 +207,14 @@ html{scroll-padding-top:20px;scroll-behavior:smooth}
   {% for d in view.devices %}<a class="chip sub {{ 'on' if view.device == d }}" href="{{ url_for(request.endpoint, who=view.key, device=d, **request.view_args) }}">{{ d }}</a>{% endfor %}
 </div>{% endif %}
 
+{% if unfinished and not weeks.recorded %}
+{# Nothing can have been recorded yet: say what will appear where, in place of empty cards. #}
+<div class="cols">
+  <section class="ghostcard" style="flex:1 1 360px;min-height:220px"><b>Distraction for the day</b><span>Appears once a linked Mac has been used.</span></section>
+  <section class="ghostcard" style="flex:3 1 520px;min-height:220px"><b>Four weeks, day by day</b><span>Days appear here from the first day a linked Mac is used.</span></section>
+</div>
+<section class="ghostcard" style="min-height:150px"><b>Timeline, sprints and every switch away</b><span>Nothing recorded yet.</span></section>
+{% else %}
 <div class="cols">
   <section class="card sum" aria-label="Summary of the day">
     <div class="row" style="gap:8px"><div class="label" style="flex:1">Distracted</div>
@@ -312,6 +364,7 @@ html{scroll-padding-top:20px;scroll-behavior:smooth}
 {% endfor %}
 </div>
 
+{% endif %}
 </div>
 <script>
 (function () {

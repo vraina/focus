@@ -18,7 +18,7 @@ from datetime import datetime, timedelta, timezone
 from functools import wraps
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from flask import abort, redirect, render_template, request, session, url_for
+from flask import abort, g, redirect, render_template, request, session, url_for
 from itsdangerous import BadSignature, SignatureExpired
 from werkzeug.security import check_password_hash, generate_password_hash
 
@@ -251,7 +251,53 @@ def register(app, svc):
             return view(*args, **kwargs)
         return wrapper
 
+    # --- First-time setup: what is done, worked out from the real records ---------------------
+
+    def setup_state() -> dict | None:
+        """Where a household stands on first-time setup, for the reminders and the wizard. None for anyone
+        who is not the household's admin: co-admins and invited adults join a household that already exists.
+
+        Nothing here is a stored "finished" flag. Setup is complete when the household has at least one kid
+        and at least one linked computer, so a household set up the old way never sees a reminder, and
+        removing the only computer brings it back. The one thing that cannot be seen in the records is
+        whether the app has been installed, so the parent's own "The app is installed" answer is kept."""
+        account = current_account()
+        if not account or account.get("role") != "admin":
+            return None
+        if getattr(g, "setup_state", None) is not None:
+            return g.setup_state
+        fid = account["familyId"]
+        family = families.find_one({"_id": fid}) or {}
+        kids = [m.get("name", "Kid") for m in members.find({"familyId": fid, "kind": "kid"}).sort("name", 1)]
+        computers = [d.get("name", "Mac") for d in devices.find({"familyId": fid, "revoked": {"$ne": True}}).sort("pairedAt", 1)]
+        installed = bool(computers) or bool((family.get("setup") or {}).get("installed"))
+        steps = [
+            {"key": "kids", "n": 1, "title": "Add your kids", "done": bool(kids), "next": "add your kids",
+             "detail": ", ".join(kids) if kids else "First names only"},
+            {"key": "install", "n": 2, "title": "Install the app on the Mac", "done": installed, "next": "install the app on the Mac",
+             "detail": "Installed on the Mac" if installed else "On the Mac your kid uses"},
+            {"key": "link", "n": 3, "title": "Link the Mac with a code", "done": bool(computers), "next": "link the Mac with a code",
+             "detail": ", ".join(computers) if computers else "With a one-time code"}]
+        upcoming = next((x for x in steps if not x["done"]), None)
+        for x in steps:
+            x["state"] = "done" if x["done"] else ("next" if x is upcoming else "todo")
+        done = sum(1 for x in steps if x["done"])
+        g.setup_state = {"steps": steps, "done": done, "left": 3 - done, "complete": bool(kids) and bool(computers),
+                         "next": upcoming, "kids": kids, "computers": computers, "installed": installed}
+        return g.setup_state
+
+    @app.get("/setup")
+    @signed_in
+    def setup():
+        """Opens setup at the first unfinished step. Until the wizard's own screens exist, that is the page
+        where the step is done today."""
+        state = setup_state()
+        if state is None or state["complete"]:
+            return redirect(url_for("overview"))
+        return redirect(url_for("people") if state["next"]["key"] == "kids" else url_for("computers"))
+
     svc.signed_in, svc.check_csrf, svc.is_admin = signed_in, check_csrf, is_admin
+    app.jinja_env.globals.update(setup_state=setup_state)
     app.jinja_env.globals.update(csrf_token=csrf_token, current_account=current_account, is_admin=is_admin,
                                  service_owner=lambda a: bool((families.find_one({"_id": a["familyId"]}) or {}).get("serviceOwner")))
 

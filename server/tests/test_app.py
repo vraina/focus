@@ -933,3 +933,56 @@ def test_the_four_details_pages_show_the_same_day_and_person(w):
     w.add_kid(other, "Zed")
     theirs = other.get(f"/dashboard/day/{day}/switches?who={mia}").get_data(as_text=True)
     assert "espn.com" not in theirs and "Zed&#39;s day" in theirs
+
+
+def test_setup_reminders_follow_the_real_records(w):
+    admin = w.household("mum@example.com")
+    card, button = "Continue setup", "Finish setup"
+    page = lambda who=admin, path="/dashboard": who.get(path).get_data(as_text=True)
+    # A brand-new household: nothing done, both reminders on every page, and placeholders where records will be.
+    first = page()
+    assert "Setup · 0 of 3 steps done" in first and "Start setup" in first and "Finish setup · 0 of 3" in first
+    assert "Three steps left" in first and "Next: add your kids" in first and "Distraction for the day" in first
+    for path in ("/dashboard/apps", "/dashboard/sites", "/dashboard/people", "/dashboard/computers", "/dashboard/settings"):
+        assert "Finish setup · 0 of 3" in page(path=path)
+    assert admin.get("/setup").headers["Location"].endswith("/dashboard/people")  # opens at the first unfinished step
+    # A kid exists: step 1 is done, the next step is installing.
+    kid = w.add_kid(admin, "Mia")
+    after_kid = page()
+    assert "Setup · 1 of 3 steps done" in after_kid and "Two steps left" in after_kid and "Next: install the app on the Mac" in after_kid
+    assert "Finish setup · 1 of 3" in after_kid and card in after_kid and "Mia" in after_kid
+    assert admin.get("/setup").headers["Location"].endswith("/dashboard/computers")
+    # A computer is linked: with a kid and a computer, setup is complete and both reminders are gone.
+    mac = w.pair(admin, kid, name="Mia's Mac")
+    done = page()
+    assert card not in done and button not in done and "Setup ·" not in done
+    assert admin.get("/setup").headers["Location"].endswith("/dashboard")
+    # Removing the only computer brings the reminders back, with the install step still counted as done.
+    device = w.db["devices"].find_one({"name": "Mia's Mac"})["_id"]
+    admin.post(f"/dashboard/computers/{device}/remove", data={"csrf": w.csrf(admin, "/dashboard/computers")})
+    again = page()
+    assert card in again and "Finish setup · 1 of 3" in again and "Next: install the app on the Mac" in again
+    # A computer but no kid (an admin who linked only their own Mac): still not complete, and the next step is kids.
+    w.db["members"].delete_many({"kind": "kid"})
+    w.pair(admin, w.me("mum@example.com"), name="Mum's Mac", login="mum")
+    own_only = page()
+    assert "Finish setup · 2 of 3" in own_only and "Next: add your kids" in own_only and "no kid has been added yet" in own_only
+
+
+def test_only_the_household_admin_sees_setup(w):
+    admin = w.household("mum@example.com")
+    assert "Finish setup" in admin.get("/dashboard").get_data(as_text=True)
+    # A co-admin and an invited adult join a household that already exists: no reminders, and /setup just goes home.
+    co = w.join(w.invite_adult(admin, "Dad", role="coadmin"), "dad@example.com", name="Dad")
+    adult = w.join(w.invite_adult(admin, "Gran"), "gran@example.com", name="Gran")
+    for person in (co, adult):
+        for path in ("/dashboard", "/dashboard/apps", "/dashboard/computers"):
+            text = person.get(path).get_data(as_text=True)
+            assert "Finish setup" not in text and "Continue setup" not in text and "Start setup" not in text
+        assert person.get("/setup").headers["Location"].endswith("/dashboard")
+    assert w.browser().get("/setup").status_code == 302 and "/login" in w.browser().get("/setup").headers["Location"]
+    # A household set up the old way (a kid and a computer already there) never sees any of it.
+    other = w.household("pat@example.com")
+    w.pair(other, w.add_kid(other, "Zed"), name="Zed's Mac")
+    old_way = other.get("/dashboard").get_data(as_text=True)
+    assert all(x not in old_way for x in ("Finish setup", "Continue setup", "Start setup", "Setup ·", 'class="card remind"'))
