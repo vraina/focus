@@ -40,23 +40,14 @@ enum AppDialog {
 }
 
 private struct DialogShell<Content: View>: View {
-    var icon: String
-    var tint: Color?
     @ViewBuilder var content: Content
 
     var body: some View {
-        VStack(spacing: 14) {
-            Image(systemName: icon)
-                .font(.system(size: 24, weight: .bold))
-                .foregroundStyle(.white)
-                .frame(width: 56, height: 56)
-                .background(tint.map { AnyShapeStyle($0) } ?? AnyShapeStyle(Theme.gradient), in: Circle())
-            content
-        }
-        .padding(24)
-        .frame(width: 440)
-        .background(Theme.canvas, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).strokeBorder(Theme.hairline))
+        VStack(spacing: 12) { content }
+            .padding(24)
+            .frame(width: 440)
+            .background(Theme.canvas, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(Theme.hairline))
     }
 }
 
@@ -75,50 +66,44 @@ struct RequestDialog: View {
     private var trimmed: String { reason.trimmingCharacters(in: .whitespacesAndNewlines) }
 
     var body: some View {
-        DialogShell(icon: "hand.raised.fill", tint: nil) {
-            VStack(spacing: 4) {
-                Text("Need \(host) for work?").font(Theme.title(20)).multilineTextAlignment(.center)
+        DialogShell {
+            VStack(spacing: 3) {
+                Text("Need \(host) for work?").font(Theme.title(24)).foregroundStyle(Theme.ink).multilineTextAlignment(.center)
                 Text("Say what you are working on and how long you need it.")
-                    .font(.system(size: 13)).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                    .font(.system(size: 13)).foregroundStyle(Theme.soft).multilineTextAlignment(.center)
             }
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 5) {
                 SectionLabel(text: "What for?")
                 TextField("e.g. Watching the physics lecture for Thursday's class", text: $reason, axis: .vertical)
                     .textFieldStyle(.plain)
                     .font(.system(size: 14))
-                    .lineLimit(2...4)
+                    .lineLimit(3...4)
                     .focused($typing)
-                    .padding(10)
-                    .background(Theme.surface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                    .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .strokeBorder(typing ? Theme.brand.opacity(0.7) : Theme.hairline, lineWidth: typing ? 1.5 : 1))
+                    .padding(.horizontal, 14).padding(.vertical, 10)
+                    .background(Theme.surface, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .strokeBorder(typing ? Theme.brand : Theme.outline, lineWidth: 1.5))
                     .onSubmit(send)
-                SectionLabel(text: "How long?").padding(.top, 6)
-                HStack(spacing: 6) {
-                    ForEach(Array(RequestDialog.durations.enumerated()), id: \.offset) { index, item in
-                        Chip(title: item.title, selected: choice == index) { choice = index }
-                    }
-                }
+                SectionLabel(text: "How long?").padding(.top, 7)
+                Segments(label: "How long",
+                         options: RequestDialog.durations.enumerated().map { (value: $0.offset, title: $0.element.title) },
+                         selection: $choice, height: 34)
                 if RequestDialog.durations[choice].permanent {
                     Text("Choose Always only if this site is never a distraction, like a reference or school site.")
-                        .font(.system(size: 12)).foregroundStyle(.secondary)
+                        .font(.system(size: 12)).foregroundStyle(Theme.soft).padding(.top, 1)
                 }
             }
             Text(HelperStatus.load()?.isAdult == true
                  ? "The request is checked straight away. It goes into your own daily summary, which only you see."
                  : "The request is checked straight away. Your reason and the answer go into the household admins' daily summary.")
-                .font(.system(size: 12)).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                .font(.system(size: 12)).foregroundStyle(Theme.soft).multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
             HStack(spacing: 10) {
                 Button("Cancel", action: onCancel)
-                    .buttonStyle(.plain)
-                    .font(.system(size: 15, weight: .medium))
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 12)
-                    .background(Color.primary.opacity(0.07), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .buttonStyle(OutlineButtonStyle(height: 46, wide: true))
                     .keyboardShortcut(.cancelAction)
                 Button("Send request", action: send)
-                    .buttonStyle(PrimaryButtonStyle())
+                    .buttonStyle(PrimaryButtonStyle(height: 46))
                     .disabled(trimmed.isEmpty)
                     .keyboardShortcut(.defaultAction)
             }
@@ -154,18 +139,20 @@ struct AnswerDialog: View {
     }
 
     var body: some View {
-        DialogShell(icon: answer.approved ? "checkmark" : "xmark", tint: answer.approved ? Theme.good : Theme.bad) {
-            Text(title).font(Theme.title(20)).multilineTextAlignment(.center)
+        DialogShell {
+            Pill(text: answer.approved ? "Approved" : "Not approved", tint: answer.approved ? Theme.good : Theme.bad)
+            Text(title).font(Theme.title(20)).foregroundStyle(Theme.ink).multilineTextAlignment(.center)
             Text(answer.explanation)
-                .font(.system(size: 14))
+                .font(.system(size: 14)).foregroundStyle(Theme.ink)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
             Text(note)
-                .font(.system(size: 12)).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                .font(.system(size: 12)).foregroundStyle(Theme.soft).multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
             Button("OK", action: onClose)
-                .buttonStyle(PrimaryButtonStyle())
+                .buttonStyle(PrimaryButtonStyle(height: 44))
                 .keyboardShortcut(.defaultAction)
+                .padding(.top, 4)
         }
     }
 }

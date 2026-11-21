@@ -11,13 +11,12 @@ struct MeterView: View {
     var body: some View {
         let away = engine.awayNow
         let alert = away != nil
-        let ink: Color = alert ? .white : .primary
-        let soft: Color = alert ? .white.opacity(0.82) : .secondary
-        VStack(alignment: .leading, spacing: 11) {
+        let ink: Color = alert ? .white : Theme.ink
+        let soft: Color = alert ? .white : Theme.soft
+        VStack(alignment: .leading, spacing: 10) {
             if let away {
                 HStack(spacing: 6) {
-                    Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 12, weight: .bold))
-                    Text(away.label).font(.system(size: 14, weight: .bold)).lineLimit(1)
+                    Text("Away: \(away.label)").font(.system(size: 14, weight: .bold)).lineLimit(1)
                     Spacer(minLength: 4)
                     Text(SprintEngine.clock(Date().timeIntervalSince(away.since))).font(Theme.number(14))
                 }
@@ -26,15 +25,13 @@ struct MeterView: View {
 
             if engine.phase != .idle {
                 HStack(spacing: 11) {
-                    ZStack {
-                        Ring(progress: engine.sprintProgress, lineWidth: 5, tint: alert ? .white : nil)
-                        Image(systemName: engine.phase == .onBreak ? "cup.and.saucer.fill" : "timer")
-                            .font(.system(size: 12, weight: .semibold)).foregroundStyle(soft)
-                    }
-                    .frame(width: 40, height: 40)
+                    // The running circle, small. On red it is drawn in white so it stays readable.
+                    ArcRing(arcs: ring(alert: alert), lineWidth: 6, track: alert ? .white.opacity(0.3) : Theme.track)
+                        .frame(width: 46, height: 46)
+                        .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 0) {
-                        Text(engine.phase == .running ? "Sprint" : "Break").font(.system(size: 11, weight: .medium)).foregroundStyle(soft)
-                        Text(SprintEngine.clock(engine.clockSeconds)).font(Theme.number(20)).foregroundStyle(ink)
+                        Text(engine.phase == .running ? "Sprint" : "Break").font(.system(size: 11, weight: .semibold)).foregroundStyle(soft)
+                        Text(SprintEngine.clock(engine.clockSeconds)).font(Theme.number(28)).kerning(-0.5).foregroundStyle(ink)
                     }
                     Spacer(minLength: 0)
                 }
@@ -54,51 +51,51 @@ struct MeterView: View {
                     Text("Searches: \(engine.searchCounts.work) work · \(engine.searchCounts.distraction) distraction")
                 }
             }
-            .font(.system(size: 10)).foregroundStyle(soft)
+            .font(.system(size: 10.5)).foregroundStyle(soft)
 
             // Deliberately quiet: available when it is true, but not the thing the card invites you to press.
             if let away, let host = away.host, away.category == .distraction {
                 switch engine.disputeOption(for: host) {
                 case .available:
                     Button { DisputePrompt.ask(host: host, engine: engine) } label: {
-                        Text("Needed for work?").font(.system(size: 10, weight: .medium)).underline()
-                            .foregroundStyle(.white.opacity(0.85))
+                        Text("Needed for work?").font(.system(size: 11, weight: .semibold)).underline()
+                            .foregroundStyle(.white)
                     }
                     .buttonStyle(.plain)
                 case .sent:
                     Label("Checking your request…", systemImage: "hourglass")
-                        .font(.system(size: 10, weight: .medium)).foregroundStyle(.white.opacity(0.85))
+                        .font(.system(size: 11, weight: .semibold)).foregroundStyle(.white)
                 case .closed:
                     EmptyView()
                 }
             }
         }
-        .padding(13)
+        .padding(14)
         .frame(width: 244)
-        .background {
-            if alert {
-                RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Theme.bad)
-            } else {
-                RoundedRectangle(cornerRadius: 18, style: .continuous).fill(.regularMaterial)
-            }
-        }
+        .background(alert ? Theme.badFill : Theme.surface, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous)
-            .strokeBorder(alert ? Color.white.opacity(0.25) : Color.primary.opacity(0.12), lineWidth: 1))
+            .strokeBorder(alert ? Theme.badFill : Theme.hairline, lineWidth: 1))
+    }
+
+    private func ring(alert: Bool) -> [RingArc] {
+        let arcs = engine.phase == .onBreak ? engine.breakArcs : engine.sprintArcs
+        // On the red card only the time so far is drawn, in white.
+        return alert ? arcs.prefix(1).map { RingArc(from: $0.from, to: $0.to, color: .white) } : arcs
     }
 
     private func bar(title: String, value: Double, alert: Bool) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Text(title).font(.system(size: 11, weight: .medium)).foregroundStyle(alert ? .white : .primary)
-                Text("distraction").font(.system(size: 11)).foregroundStyle(alert ? .white.opacity(0.82) : .secondary)
+            HStack(spacing: 4) {
+                Text(title).font(.system(size: 11, weight: .semibold)).foregroundStyle(alert ? .white : Theme.ink)
+                Text("distraction").font(.system(size: 11)).foregroundStyle(alert ? .white : Theme.soft)
                 Spacer()
                 Text("\(Int((value * 100).rounded()))%")
-                    .font(Theme.number(13)).foregroundStyle(alert ? .white : levelColor(value))
+                    .font(Theme.number(13)).foregroundStyle(alert ? .white : Theme.text(for: levelColor(value)))
             }
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
-                    Capsule().fill(alert ? Color.white.opacity(0.25) : Color.primary.opacity(0.10))
-                    Capsule().fill(alert ? Color.white : levelColor(value))
+                    PillShape().fill(alert ? Color.white.opacity(0.3) : Theme.track)
+                    PillShape().fill(alert ? Color.white : levelColor(value))
                         .frame(width: max(value > 0 ? 5 : 0, geo.size.width * value))
                 }
             }

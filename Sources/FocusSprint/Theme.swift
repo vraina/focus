@@ -265,7 +265,7 @@ struct Segments<Value: Hashable>: View {
             ForEach(options, id: \.value) { option in
                 let on = option.value == selection
                 Button { selection = option.value } label: {
-                    Text(option.title).font(.system(size: 14, weight: .semibold)).lineLimit(1).minimumScaleFactor(0.8)
+                    Text(option.title).font(.system(size: height < 36 ? 13 : 14, weight: .semibold)).lineLimit(1).minimumScaleFactor(0.8)
                         .padding(.horizontal, 6)
                         .frame(maxWidth: .infinity).frame(height: height)
                         .foregroundStyle(on ? Theme.onBrand : Theme.soft)
@@ -308,6 +308,7 @@ struct PrimaryButtonStyle: ButtonStyle {
 struct OutlineButtonStyle: ButtonStyle {
     var tint: Color = Theme.ink
     var height: CGFloat = 40
+    var wide = false
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
@@ -315,6 +316,7 @@ struct OutlineButtonStyle: ButtonStyle {
             .lineLimit(1)
             .foregroundStyle(tint)
             .padding(.horizontal, 20)
+            .frame(maxWidth: wide ? .infinity : nil)
             .frame(height: height)
             .overlay(PillShape().strokeBorder(Theme.outline, style: StrokeStyle(lineWidth: 1.5, lineJoin: .round)))
             .contentShape(PillShape())
