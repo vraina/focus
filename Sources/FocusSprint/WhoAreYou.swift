@@ -21,6 +21,8 @@ struct WhoAreYouView: View {
         ZStack {
             Theme.canvas.ignoresSafeArea()
             VStack(alignment: .leading, spacing: 14) {
+                // On a Mac that is already linked, choosing a profile is this login's first step.
+                StepRow(current: 1, first: "Choose your profile").padding(.bottom, 6)
                 Text("Who are you?").font(Theme.title(42)).kerning(-1).foregroundStyle(Theme.ink)
                 Text("This Mac is shared by your household. Pick your profile once, and this login is yours from then on.")
                     .font(.system(size: 15)).foregroundStyle(Theme.soft).frame(maxWidth: 640, alignment: .leading)
@@ -65,7 +67,10 @@ struct WhoAreYouView: View {
             .padding(EdgeInsets(top: 48, leading: 40, bottom: 28, trailing: 40))
             .frame(maxWidth: 1000, maxHeight: .infinity, alignment: .topLeading)
         }
-        .onAppear { if startAsAdult { showCode = true } }
+        .onAppear {
+            if startAsAdult { showCode = true }
+            FirstRun.noteStarted()
+        }
         .onReceive(poll) { _ in
             guard let id = waitingFor else { return }
             if let result = PairingResult.load(), result.id == id {

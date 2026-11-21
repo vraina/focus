@@ -126,6 +126,9 @@ struct ContentView: View {
     /// Development snapshots only: made-up app lists for the Apps screen.
     var sampleApps: AppList?
     var sampleStatus: HelperStatus?
+    @State private var canRecord = CGPreflightScreenCaptureAccess()
+    /// Bumped when a first-run step is left, so the next one is worked out again.
+    @State private var firstRunTurn = 0
 
     var body: some View {
         HStack(spacing: 0) {
@@ -141,12 +144,35 @@ struct ContentView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+        // While a first-run step or "Who are you?" covers the app, nothing underneath can be pressed or
+        // reached with Return.
+        .disabled(covered)
         .background(Theme.canvas)
         .overlay { MediaViewerOverlay(viewer: MediaViewer.shared) }
+        // The guided first run, one step at a time, and only the steps this login still needs.
+        .overlay {
+            let _ = firstRunTurn
+            if let step = FirstRun.step(status: status, canRecord: canRecord, idle: engine.phase == .idle) {
+                FirstRunView(step: step, status: status) {
+                    if step == .ready { pane = .focus }
+                    firstRunTurn += 1
+                }
+                .id(step)
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            canRecord = CGPreflightScreenCaptureAccess()
+        }
         // The computer is linked but this login has no person yet: nothing else in the app until that is settled.
         .overlay { if let status, status.isFresh, status.needsProfile { WhoAreYouView(status: status) } }
         .onReceive(statusTimer) { _ in status = HelperStatus.load() }
         .onAppear { Timing.mark("main window appeared") }
+    }
+
+    private var covered: Bool {
+        let _ = firstRunTurn
+        if let status, status.isFresh, status.needsProfile { return true }
+        return FirstRun.step(status: status, canRecord: canRecord, idle: engine.phase == .idle) != nil
     }
 
     private var sidebar: some View {

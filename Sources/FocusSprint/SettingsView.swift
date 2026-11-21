@@ -30,15 +30,15 @@ enum AdminWriter {
 struct SettingsView: View {
     /// Development snapshots only: a made-up status to draw instead of the helper's.
     var sample: HelperStatus?
-    @State private var status = HelperStatus.load()
-    @State private var code = ""
-    @State private var deviceName = Host.current().localizedName ?? "Mac"
-    @State private var waitingFor: String?
-    @State private var startedWaiting = Date()
-    @State private var message: String?
-    @State private var messageIsError = false
+    @StateObject private var linker = Linker()
     private let poll = Ticker.every1
     @FocusState private var nameFocused: Bool
+
+    private var status: HelperStatus? { linker.status }
+    private var waitingFor: String? { linker.waitingFor }
+    private var message: String? { linker.message }
+    private var messageIsError: Bool { linker.messageIsError }
+    private var code: String { linker.code }
 
     private var helperRunning: Bool { status?.isFresh == true }
     private var linked: Bool { status?.linked == true }
@@ -74,7 +74,7 @@ struct SettingsView: View {
         .onAppear {
             // For testing the link screen without typing: submits the given code once the screen opens.
             if let auto = ProcessInfo.processInfo.environment["FOCUSSPRINT_AUTOLINK"], waitingFor == nil, message == nil {
-                code = auto
+                linker.code = auto
                 link()
                 FileHandle.standardError.write(Data("autolink: submitted\n".utf8))
             }
@@ -96,11 +96,11 @@ struct SettingsView: View {
             }
             VStack(alignment: .leading, spacing: 5) {
                 SectionLabel(text: "Code from the website")
-                CodeField(code: $code, onSubmit: link)
+                CodeField(code: $linker.code, onSubmit: link)
             }
             VStack(alignment: .leading, spacing: 5) {
                 SectionLabel(text: "Name for this computer")
-                TextField("e.g. Mia's MacBook", text: $deviceName)
+                TextField("e.g. Mia's MacBook", text: $linker.deviceName)
                     .textFieldStyle(.plain).font(.system(size: 15))
                     .focused($nameFocused)
                     .padding(.horizontal, 16).frame(height: 44)
@@ -175,7 +175,36 @@ struct SettingsView: View {
 
     // MARK: Actions
 
-    private func refresh() {
+    private func refresh() { linker.refresh(sample: sample) }
+    private func link() { linker.link() }
+
+    private func unlink() {
+        do {
+            try AdminWriter.unlink()
+            linker.message = "Unlinked. This computer keeps recording, and sends everything once it is linked again."
+            linker.messageIsError = false
+        } catch {
+            linker.message = error.localizedDescription
+            linker.messageIsError = true
+        }
+    }
+}
+
+/// Linking this Mac with a code from the website: what is typed, the wait for the helper's answer, and
+/// what to say afterwards. Shared by the Account tab and the first run's "Link this Mac" step.
+@MainActor
+final class Linker: ObservableObject {
+    @Published var status = HelperStatus.load()
+    @Published var code = ""
+    @Published var deviceName = Host.current().localizedName ?? "Mac"
+    @Published var waitingFor: String?
+    @Published var message: String?
+    @Published var messageIsError = false
+    private var startedWaiting = Date()
+
+    var canLink: Bool { waitingFor == nil && code.filter { $0.isLetter || $0.isNumber }.count >= 8 }
+
+    func refresh(sample: HelperStatus? = nil) {
         status = sample ?? HelperStatus.load()
         guard let id = waitingFor else { return }
         if status?.linked == true, PairingResult.load()?.id != id, Date().timeIntervalSince(startedWaiting) > 5 {
@@ -199,7 +228,7 @@ struct SettingsView: View {
         }
     }
 
-    private func link() {
+    func link() {
         let id = UUID().uuidString.lowercased()
         let name = deviceName.trimmingCharacters(in: .whitespaces)
         do {
@@ -209,17 +238,6 @@ struct SettingsView: View {
             message = nil
         } catch {
             message = "Could not pass the code to the helper. Run the installer again from an administrator account."
-            messageIsError = true
-        }
-    }
-
-    private func unlink() {
-        do {
-            try AdminWriter.unlink()
-            message = "Unlinked. This computer keeps recording, and sends everything once it is linked again."
-            messageIsError = false
-        } catch {
-            message = error.localizedDescription
             messageIsError = true
         }
     }

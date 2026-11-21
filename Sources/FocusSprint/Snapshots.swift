@@ -108,6 +108,17 @@ enum Snapshots {
             Shot(name: "15c-who-none", size: CGSize(width: 1040, height: 760), view: {
                 AnyView(WhoAreYouView(status: HelperStatus(linked: true, deviceName: "Den iMac", pending: 0)))
             }),
+            Shot(name: "16-first-link", size: CGSize(width: 940, height: 640), view: {
+                AnyView(FirstRunView(step: .link, status: nil, advance: {}))
+            }),
+            Shot(name: "17-first-pictures", size: CGSize(width: 940, height: 640), view: {
+                AnyView(FirstRunView(step: .pictures, status: nil, advance: {}))
+            }),
+            Shot(name: "18-first-ready", size: CGSize(width: 940, height: 640), view: {
+                var status = HelperStatus(linked: true, deviceName: "Den iMac", pending: 0)
+                status.memberName = "Mia"; status.memberKind = "kid"
+                return AnyView(FirstRunView(step: .ready, status: status, advance: {}))
+            }),
             Shot(name: "AppIcon", size: CGSize(width: 1024, height: 1024), view: { AnyView(AppIconArt()) }),
         ]
         Task { @MainActor in
