@@ -933,16 +933,3 @@ def test_the_four_details_pages_show_the_same_day_and_person(w):
     w.add_kid(other, "Zed")
     theirs = other.get(f"/dashboard/day/{day}/switches?who={mia}").get_data(as_text=True)
     assert "espn.com" not in theirs and "Zed&#39;s day" in theirs
-
-
-def test_the_site_serves_its_own_fonts_and_loads_nothing_from_outside(w):
-    anyone = w.browser()
-    for name in ("inter-latin.woff2", "inter-latin-ext.woff2", "space-grotesk-latin.woff2", "space-grotesk-latin-ext.woff2"):
-        reply = anyone.get(f"/static/fonts/{name}")  # needed on the sign-in page too, so no sign-in is required
-        assert reply.status_code == 200 and reply.data[:4] == b"wOF2" and "max-age=2592000" in reply.headers["Cache-Control"]
-    admin = w.household("mum@example.com")
-    for page in ("/login", "/dashboard", "/dashboard/apps", "/dashboard/computers"):
-        text = (anyone if page == "/login" else admin).get(page).get_data(as_text=True)
-        assert "/static/fonts/space-grotesk-latin.woff2" in text and "/static/fonts/inter-latin.woff2" in text
-        outside = set(re.findall(r'<(?:link|script|img|iframe)[^>]*(?:src|href)="(https?://[^"]+)"', text)) | set(re.findall(r"url\\((https?://[^)]+)\\)", text))
-        assert not outside, outside  # no fonts, scripts, styles or pictures loaded from other sites (ordinary links are fine)

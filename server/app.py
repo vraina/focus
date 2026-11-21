@@ -142,7 +142,6 @@ def create_app(db=None, classify=classifier.classify, review=classifier.review_r
     if not secret:
         raise RuntimeError("SECRET_KEY must be set")
     app.secret_key = secret  # signs the website's sign-in cookie
-    app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 30 * 24 * 3600  # the site's own fonts: browsers may keep them for a month
     app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_BYTES + 1024 * 1024
     if db is None:
         db = MongoClient(os.environ["MONGODB_URI"])[os.environ.get("MONGODB_DB", "focussprint")]
