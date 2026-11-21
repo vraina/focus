@@ -288,6 +288,7 @@ def register(app, svc):
 
     WIZARD_STEPS = ("welcome", "kids", "install", "link", "done")
     INSTALL_EMAILS_PER_HOUR = 3
+    CODE_EMAILS_PER_HOUR = 5
 
     def installer_url() -> str:
         """The same download the Computers page links to; empty when no installer has been published."""
@@ -329,6 +330,7 @@ def register(app, svc):
         account, family, fid = request.account, request.family, request.family["_id"]
         families.update_one({"_id": fid}, {"$set": {"setup.seen": True}})
         message = error = None
+        code_sent = False
 
         if request.method == "POST":
             check_csrf()
@@ -378,6 +380,29 @@ def register(app, svc):
                 if action == "code":
                     make_pairing_code(request.form.get("member", ""))  # the Computers page's own code maker
                     return redirect(url_for("setup_step", step="link", member=request.form.get("member", "")))
+                if action == "emailcode":
+                    # Sends the code that is already on the screen. It is not remade or extended: still single use,
+                    # still its normal expiry. Only ever to the signed-in parent's own address.
+                    kid = members.find_one({"_id": request.form.get("member", ""), "familyId": fid, "kind": "kid"})
+                    live = kid and db["pairings"].find_one({"createdBy": account["_id"], "memberId": kid["_id"], "used": False,
+                                                            "expiresAt": {"$gt": utcnow()}})
+                    hour_ago = (datetime.now(timezone.utc) - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+                    recent = [t for t in (family.get("setup") or {}).get("codeEmails", []) if t > hour_ago]
+                    if not live:
+                        error = "That code has been used or has expired. Get a new one, then email it."
+                    elif len(recent) >= CODE_EMAILS_PER_HOUR:
+                        error = "Codes have been emailed a few times already. Check your inbox, or try again in an hour."
+                    else:
+                        until = datetime.strptime(live["expiresAt"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc).astimezone(svc.zone(family))
+                        sent = svc.send_email(account["email"], *mailer.code_email(
+                            f"{live['_id'][:4]}-{live['_id'][4:]}", kid.get("name", "your kid"), until.strftime("%-I:%M %p").lower()))
+                        families.update_one({"_id": fid}, {"$set": {"setup.codeEmails": recent + [utcnow()]}})
+                        if sent:
+                            code_sent = True
+                            message = f"Sent to {account['email']}."
+                        else:
+                            error = "The email could not be sent just now. Use Copy code instead."
+                    request.picked_member = request.form.get("member", "")
                 if action == "typed":
                     return redirect(url_for("setup_step", step="done" if setup_devices() else "link", member=request.form.get("member", ""), waiting=1))
             g.setup_state = None
@@ -392,12 +417,13 @@ def register(app, svc):
         kids = kid_rows() if step in ("kids", "link", "done") else []
         ctx: dict = {}
         if step == "link":
-            picked = next((k for k in kids if k["id"] == request.args.get("member")), None) \
+            asked = request.args.get("member") or getattr(request, "picked_member", "")
+            picked = next((k for k in kids if k["id"] == asked), None) \
                 or next((k for k in kids if not k["linked"]), kids[0])
             pairing = db["pairings"].find_one({"createdBy": account["_id"], "memberId": picked["id"], "used": False, "expiresAt": {"$gt": utcnow()}})
             if pairing is None and request.method == "GET" and not request.args.get("waiting"):
                 pairing = make_pairing_code(picked["id"])  # opening the step shows a code straight away
-            ctx = {"picked": picked, "minutes": PAIRING_MINUTES, "still_waiting": bool(request.args.get("waiting")),
+            ctx = {"picked": picked, "minutes": PAIRING_MINUTES, "still_waiting": bool(request.args.get("waiting")), "code_sent": code_sent,
                    "code": f"{pairing['_id'][:4]}-{pairing['_id'][4:]}" if pairing else "", "raw_code": pairing["_id"] if pairing else "",
                    "expires": pairing["expiresAt"] if pairing else ""}
         elif step == "done":

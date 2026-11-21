@@ -99,6 +99,19 @@ def installer_email(link: str) -> tuple[str, str]:
                           "Download for Mac", link, "You asked for this link during setup. Nothing is ever blocked: the app records and shows."))
 
 
+def code_email(code: str, name: str, expires: str) -> tuple[str, str]:
+    """The pairing code from the setup wizard, for a parent who is not next to the Mac. The code itself is
+    unchanged by being emailed: it still works once and expires when it would have anyway."""
+    e = html.escape
+    return (f"Your YoungWonks Focus code for {name}'s Mac login",
+            f'''<div style="font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;font-size:15px;color:#1a1a1a;max-width:520px">
+<h2 style="margin:0 0 8px">Code for {e(name)}'s Mac login</h2>
+<p style="font:700 34px/1.2 ui-monospace,Menlo,monospace;letter-spacing:4px;margin:14px 0">{e(code)}</p>
+<p>It works once and expires at {e(expires)}. If it has expired, get a new one in setup on the website.</p>
+<p>On the Mac: open YoungWonks Focus in {e(name)}'s Mac login, choose <b>Account</b>, and type the code. No password is typed on the Mac.</p>
+<p style="color:#666;font-size:13px">You asked for this code during setup. Nothing is ever blocked: the app records and shows.</p></div>''')
+
+
 def reset_email(link: str) -> tuple[str, str]:
     return ("Choose a new password for YoungWonks Focus",
             _button_email("Choose a new password", "Use the button below to set a new password. The link works for one hour.",

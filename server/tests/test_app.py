@@ -1099,3 +1099,47 @@ def test_the_installer_link_is_emailed_only_to_the_signed_in_parent(w):
     co = w.join(w.invite_adult(admin, "Dad", role="coadmin"), "dad@example.com", name="Dad")
     assert co.post("/setup/install", data={"csrf": w.csrf(co, "/dashboard"), "action": "email"}).headers["Location"].endswith("/dashboard")
     assert sum(1 for e in w.emails if "installer" in e["subject"].lower()) == 3 and all(e["to"] == "mum@example.com" for e in w.emails if "installer" in e["subject"].lower())
+
+
+def test_the_pairing_code_can_be_emailed_to_the_parent_without_changing_it(w):
+    admin = w.household("mum@example.com")
+    mia, leo = w.add_kid(admin, "Mia"), w.add_kid(admin, "Leo")
+    page = admin.get(f"/setup/link?member={mia}").get_data(as_text=True)
+    assert "Email it to me" in page and "Email the code to me" in page and 'type="email"' not in page  # no field for another address
+    before = w.db["pairings"].find_one({"used": False})
+    code = f"{before['_id'][:4]}-{before['_id'][4:]}"
+    token = w.csrf(admin, f"/setup/link?member={mia}")
+    send = lambda member=mia, **extra: admin.post("/setup/link", data={"csrf": token, "action": "emailcode", "member": member, **extra})
+    codes = lambda: [e for e in w.emails if "code for" in e["subject"].lower()]
+    reply = send(email="someone-else@example.com", to="someone-else@example.com")  # extra fields are ignored
+    text = reply.get_data(as_text=True)
+    assert reply.status_code == 200 and "Sent to mum@example.com" in text and ">Sent</button>" in text.replace("</svg>Sent", ">Sent")
+    assert f'id="thecode">{code}<' in text  # the same code is still on the screen
+    sent = codes()
+    assert len(sent) == 1 and sent[0]["to"] == "mum@example.com"
+    assert code in sent[0]["body"] and "Mia" in sent[0]["subject"] and "Mia's Mac login" in sent[0]["body"]  # whose login it is for
+    assert re.search(r"expires at \d{1,2}:\d\d [ap]m", sent[0]["body"]) and "works once" in sent[0]["body"].lower()  # and when it expires
+    # Emailing changes nothing about the code: same code, same expiry, still unused, and it still links a Mac once.
+    after = w.db["pairings"].find_one({"_id": before["_id"]})
+    assert after == before and w.db["pairings"].count_documents({}) == 1
+    # Rate-limited per household: after the limit, a plain refusal and nothing sent.
+    for _ in range(4):
+        assert send().status_code == 200
+    refused = send()
+    assert refused.status_code == 400 and "try again in an hour" in refused.get_data(as_text=True) and len(codes()) == 5
+    assert w.db["pairings"].find_one({"_id": before["_id"]}) == before
+    assert w.browser().post("/api/pair", json={"code": code, "name": "Mia's Mac", "login": "mia"}).status_code == 200
+    assert w.browser().post("/api/pair", json={"code": code, "name": "Again", "login": "x"}).status_code == 400  # single use
+    # A used or expired code is not emailed, and no new one is made by asking.
+    w.db["families"].update_many({}, {"$unset": {"setup.codeEmails": ""}})
+    gone = send()
+    assert gone.status_code == 400 and "used or has expired" in gone.get_data(as_text=True) and len(codes()) == 5
+    assert w.db["pairings"].count_documents({"used": False}) == 0
+    # Without the form token nothing is sent; a co-admin has no wizard; someone else's kid id sends nothing.
+    assert admin.post("/setup/link", data={"action": "emailcode", "member": leo}).status_code == 303
+    co = w.join(w.invite_adult(admin, "Dad", role="coadmin"), "dad@example.com", name="Dad")
+    assert co.post("/setup/link", data={"csrf": w.csrf(co, "/dashboard"), "action": "emailcode", "member": leo}).headers["Location"].endswith("/dashboard")
+    other = w.household("pat@example.com")
+    w.add_kid(other, "Zed")
+    assert other.post("/setup/link", data={"csrf": w.csrf(other, "/setup/kids"), "action": "emailcode", "member": mia}).status_code == 400
+    assert len(codes()) == 5 and all(e["to"] == "mum@example.com" for e in codes())
