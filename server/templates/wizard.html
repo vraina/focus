@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% set bare = true %}
 {% set texts = ['Setup', 'Setup · step 1 of 3', 'Setup · step 2 of 3', 'Setup · step 3 of 3', 'Setup complete'] %}
+{% set short = ['Setup', 'Step 1 of 3', 'Step 2 of 3', 'Step 3 of 3', 'Setup complete'] %}
 {% block title %}{{ texts[index] }} · YoungWonks Focus{% endblock %}
 {% block head %}
 <style>
@@ -67,23 +68,63 @@ main{max-width:1200px;padding:0 32px 48px;font-size:16px}
 .back:hover{text-decoration:none;border-color:var(--brand-line)}
 .skip{display:inline-flex;align-items:center;height:52px;padding:0 18px;font-size:15px;font-weight:600;margin-left:auto}
 .msg{border-radius:14px;padding:12px 16px;font-weight:600} .msg.ok{background:var(--good-tint);color:var(--good)} .msg.err{background:var(--bad-tint);color:var(--badtext)}
-@media (max-width:860px){
-  main{padding:0 16px 40px} .wtop .eyebrow{flex-basis:100%;margin:0;order:3} .wtop .who{flex-wrap:wrap;min-width:0}
-  .wiz{margin-top:18px;gap:14px} .rail{flex-basis:100%;flex-direction:row;gap:4px} .rail li{flex:1;min-width:0;padding:10px;gap:8px;flex-direction:column;align-items:flex-start}
-  .rail b{font-size:13px} .rail span.d{display:none} .railnote{display:none}
-  .task{padding:22px;border-radius:22px;min-height:0;gap:18px} .task h1,.task h1.xl{font-size:34px;letter-spacing:-1.2px;margin-top:-6px} .lead{font-size:16px}
-  .three,.two{grid-template-columns:1fr} .thecode{font-size:clamp(30px,10.5vw,44px);letter-spacing:2px}
-  .foot>*{flex:1 1 100%;justify-content:center;text-align:center} .skip{margin-left:0} .fill,.soft-btn{width:100%} .addrow .soft-btn{width:100%}
+.segs,.narrow-only{display:none}
+.copycode{height:48px;font-size:15px;padding:0 18px}
+.newform{margin-top:6px}
+/* Phones (and anything narrower than the site's usual breakpoint): one column, the task straight on the
+   ground, the main action full width at the bottom. The desktop layout above is untouched. */
+@media (max-width:760px){
+  main{padding:0 16px 20px;min-height:100vh;min-height:100dvh;display:flex;flex-direction:column}
+  .wide{display:none} .narrow-only{display:inline}
+  .wtop{padding-top:12px;gap:10px;flex-wrap:nowrap} .wtop .who{min-width:0;gap:10px;flex-wrap:nowrap} .wtop .brand{display:none}
+  .wtop .eyebrow{margin-left:0;font-size:12.5px;letter-spacing:1.2px;white-space:nowrap}
+  .exit{padding:0 16px;flex:none}
+  .progress{display:none} .segs{display:flex;gap:6px;margin-top:14px} .segs i{flex:1;height:6px;border-radius:99px;background:var(--line)}
+  .segs i.done{background:var(--good-fill)} .segs i.cur{background:var(--brand)}
+  .wiz{display:flex;flex-direction:column;flex:1;margin-top:26px;gap:0} .rail{display:none}
+  .task{flex:1 1 auto;min-height:0;background:none;border:0;box-shadow:none;border-radius:0;padding:0;gap:18px}
+  .task>.eyebrow{display:none}
+  .task h1{font-size:38px;line-height:1.05;letter-spacing:-1.4px;margin:0} .task h1.xl{font-size:42px;line-height:1.02;letter-spacing:-1.6px;margin:0}
+  .lead{font-size:17px}
+  /* Welcome: the three steps stack, each with its number on the left. */
+  .three{grid-template-columns:1fr;gap:8px}
+  .box{display:grid;grid-template-columns:30px 1fr;column-gap:16px;align-items:center;background:var(--surface);border:1px solid var(--line);padding:16px 18px}
+  .box .num{font-size:36px;grid-row:1/span 2} .box b{margin-top:0}
+  /* Add your kids: the field and Add share a row. */
+  .addrow{display:grid;grid-template-columns:1fr auto;gap:6px 8px;align-items:end} .addrow .f{grid-column:1;min-width:0}
+  .addrow label{grid-column:1/-1} .addrow .soft-btn{padding:0 20px;width:auto}
+  .big-input{font-size:17px;padding:0 16px;background:var(--surface)}
+  .person{background:var(--surface);border:1px solid var(--line);padding:10px 12px 10px 14px;gap:12px} .person .nm{font-size:17px}
+  /* Install and link cards. */
+  .two{grid-template-columns:1fr} .choice{background:var(--surface);padding:18px;gap:10px}
+  .steps li{align-items:flex-start}
+  .ask{display:block;font-size:15px} .ask .seg{display:flex;width:100%;margin-top:8px;background:var(--surface)} .ask .seg a{flex:1;justify-content:center;padding:0 8px}
+  .linkrow{flex-direction:column;gap:18px}
+  .codebox{flex:none;background:var(--surface);padding:22px;gap:10px;display:grid;grid-template-columns:1fr 1fr;column-gap:8px;justify-items:stretch;text-align:center}
+  .codebox>*{grid-column:1/-1} .codeline{display:contents}
+  .thecode{grid-column:1/-1;font-size:clamp(34px,13.4vw,64px);letter-spacing:clamp(1px,1.1vw,5px);text-align:center}
+  .forwho{order:1} .thecode{order:2} .expiry{order:3} .codemail{order:4} .copycode{order:5;grid-column:1!important} .newform{order:5;grid-column:2!important;margin:0}
+  .copycode,.newcode{width:100%;height:48px;justify-content:center;padding:0 8px;font-size:15px;background:transparent;color:var(--ink);border:1px solid var(--line);font-weight:600}
+  .onmac{flex:none} .status{align-items:flex-start;padding:14px 16px} .status i{margin-top:6px}
+  .tick{width:68px;height:68px}
+  /* Finished: a kid with no computer gets a card with a full-width button. */
+  .person:has(.soft-btn.pill){flex-direction:column;align-items:stretch;padding:14px 16px;gap:10px} .person .soft-btn.pill{height:48px;justify-content:center;font-size:15px;width:100%}
+  /* Actions: the main button first and full width, then Back and Skip side by side. */
+  .foot{margin-top:auto;padding-top:10px;gap:8px} .foot .primary{order:0;flex:1 1 100%} .foot .primary .fill,.foot a.fill.primary{width:100%;height:56px;font-size:17px}
+  .foot .back,.foot .skip{order:1;flex:1;height:48px;justify-content:center;font-size:15px;margin-left:0;padding:0 8px}
+  .fill{height:54px} .outline{height:54px;font-size:16px;flex:1 1 100%}
 }
 </style>
 {% endblock %}
 {% block body %}
 <header class="wtop">
   <div class="who"><span class="logo"><svg aria-hidden="true" width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="9" cy="9" r="6.2"></circle><path d="M9 5.6V9l2.3 1.7"></path></svg></span>
-    <span class="brand">YoungWonks Focus</span><span class="eyebrow">{{ texts[index] }}</span></div>
+    <span class="brand">YoungWonks Focus</span><span class="eyebrow"><span class="wide">{{ texts[index] }}</span><span class="narrow-only">{{ short[index] }}</span></span></div>
   <a class="exit" href="{{ url_for('overview') }}">Exit setup</a>
 </header>
 <div class="progress" role="img" aria-label="{{ texts[index] }}"><i style="width:{{ index * 25 }}%"></i></div>
+{# On a phone the list of steps becomes three segments: finished green, current accent, the rest grey. #}
+<div class="segs" role="img" aria-label="{{ short[index] }}">{% for n in (1, 2, 3) %}<i class="{{ 'done' if index > n else ('cur' if index == n else '') }}"></i>{% endfor %}</div>
 
 <div class="wiz">
   <ol class="rail" aria-label="Setup steps">
@@ -111,7 +152,7 @@ main{max-width:1200px;padding:0 32px 48px;font-size:16px}
       </div>
       <div class="fine">Nothing is ever blocked. The app records what happens and shows it to you.</div>
       <div class="foot">
-        <form method="post"><input type="hidden" name="csrf" value="{{ csrf_token() }}"><button class="fill" autofocus>Start setup</button></form>
+        <form method="post" class="primary"><input type="hidden" name="csrf" value="{{ csrf_token() }}"><button class="fill" autofocus>Start setup</button></form>
         <a class="skip" href="{{ url_for('overview') }}">Skip for now</a>
       </div>
 
@@ -123,7 +164,7 @@ main{max-width:1200px;padding:0 32px 48px;font-size:16px}
         <input type="hidden" name="csrf" value="{{ csrf_token() }}"><input type="hidden" name="action" value="add">
         <div class="f"><label for="kid-name">Kid's first name</label>
           <input class="big-input" id="kid-name" name="name" type="text" maxlength="40" placeholder="For example: Sam" autocomplete="off" required {{ 'autofocus' if not kids }}></div>
-        <button class="soft-btn">Add kid</button>
+        <button class="soft-btn" aria-label="Add kid">Add<span class="wide"> kid</span></button>
       </form>
       <div class="list">
         <div class="k">Added so far</div>
@@ -139,7 +180,7 @@ main{max-width:1200px;padding:0 32px 48px;font-size:16px}
       <div class="fine">Other adults can be invited later from People. An adult's records stay private to them.</div>
       <div class="foot">
         <a class="back" href="{{ url_for('setup_step', step='welcome') }}">Back</a>
-        {% if kids %}<form method="post"><input type="hidden" name="csrf" value="{{ csrf_token() }}"><input type="hidden" name="action" value="next"><button class="fill">Next: install the app</button></form>{% endif %}
+        {% if kids %}<form method="post" class="primary"><input type="hidden" name="csrf" value="{{ csrf_token() }}"><input type="hidden" name="action" value="next"><button class="fill">Next: install the app</button></form>{% endif %}
         <a class="skip" href="{{ url_for('overview') }}">Skip for now</a>
       </div>
 
@@ -168,7 +209,7 @@ main{max-width:1200px;padding:0 32px 48px;font-size:16px}
         <ol class="steps"><li>Sign in to the Mac as an administrator.</li><li>Open the downloaded file and follow the installer.</li><li>Open YoungWonks Focus from Applications and leave it open.</li></ol></div>
       <div class="foot">
         <a class="back" href="{{ url_for('setup_step', step='kids') }}">Back</a>
-        <form method="post"><input type="hidden" name="csrf" value="{{ csrf_token() }}"><input type="hidden" name="action" value="installed"><button class="fill">The app is installed</button></form>
+        <form method="post" class="primary"><input type="hidden" name="csrf" value="{{ csrf_token() }}"><input type="hidden" name="action" value="installed"><button class="fill">The app is installed</button></form>
         <a class="skip" href="{{ url_for('overview') }}">Skip for now</a>
       </div>
 
@@ -182,15 +223,15 @@ main{max-width:1200px;padding:0 32px 48px;font-size:16px}
       <div class="linkrow">
         <div class="codebox" id="codebox" data-code="{{ raw_code }}" data-expires="{{ expires }}" data-status="{{ url_for('setup_code_status') }}"
              data-done="{{ url_for('setup_step', step='done') }}">
-          <div class="k" style="font-size:14px;font-weight:600;color:var(--soft)">Code for {{ picked.name }}'s login</div>
+          <div class="k forwho" style="font-size:14px;font-weight:600;color:var(--soft)">Code for {{ picked.name }}'s login</div>
           {% if code %}
           <div class="codeline"><div class="thecode" id="thecode">{{ code }}</div>
-            <button class="fill" type="button" style="height:48px;font-size:15px;padding:0 18px" data-copy="{{ code }}" data-copied="Copied">
+            <button class="fill copycode" type="button" data-copy="{{ code }}" data-copied="Copied">
               <svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5.5" y="5.5" width="8.5" height="8.5" rx="2"/><path d="M10.5 5.5V4a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v4.5a2 2 0 0 0 2 2h1.5"/></svg><span>Copy code</span></button></div>
-          <div class="fine">Works once · <span id="expiry">expires {{ minutes }} minutes after it was made</span></div>
+          <div class="fine expiry">Works once · <span id="expiry">expires {{ minutes }} minutes after it was made</span></div>
           {% else %}<div class="fine">That code has been used or has expired. Get a new one below.</div>{% endif %}
-          <form method="post"><input type="hidden" name="csrf" value="{{ csrf_token() }}"><input type="hidden" name="action" value="code">
-            <input type="hidden" name="member" value="{{ picked.id }}"><button class="line-btn ink" style="margin-top:6px">{{ 'Get a different code' if code else 'Get a new code' }}</button></form>
+          <form method="post" class="newform"><input type="hidden" name="csrf" value="{{ csrf_token() }}"><input type="hidden" name="action" value="code">
+            <input type="hidden" name="member" value="{{ picked.id }}"><button class="line-btn ink newcode" aria-label="{{ 'Get a different code' if code else 'Get a new code' }}"><span class="wide">{{ 'Get a different code' if code else 'Get a new code' }}</span><span class="narrow-only">New code</span></button></form>
         </div>
         <div class="onmac"><div class="k" style="font-size:14px;font-weight:600;color:var(--soft)">On the Mac</div>
           <ol class="steps"><li>Open YoungWonks Focus.</li><li><span>Choose <b>Account</b>.</span></li><li>Type the code. No password is typed on the Mac.</li></ol></div>
@@ -200,7 +241,7 @@ main{max-width:1200px;padding:0 32px 48px;font-size:16px}
           {% else %}<b>Waiting for the Mac.</b> <span>This page moves on by itself as soon as the code is typed.</span>{% endif %}</div></div>
       <div class="foot">
         <a class="back" href="{{ url_for('setup_step', step='install') }}">Back</a>
-        <form method="post"><input type="hidden" name="csrf" value="{{ csrf_token() }}"><input type="hidden" name="action" value="typed">
+        <form method="post" class="primary"><input type="hidden" name="csrf" value="{{ csrf_token() }}"><input type="hidden" name="action" value="typed">
           <input type="hidden" name="member" value="{{ picked.id }}"><button class="fill">I've typed the code</button></form>
         <a class="skip" href="{{ url_for('overview') }}">Skip for now</a>
       </div>
@@ -216,7 +257,7 @@ main{max-width:1200px;padding:0 32px 48px;font-size:16px}
           <a class="soft-btn pill" href="{{ url_for('setup_step', step='link', member=k.id) }}">Link {{ k.name }}'s computer</a></div>
         {% endfor %}
       </div>
-      <div class="foot"><a class="fill" href="{{ url_for('overview') }}">Go to Activity</a></div>
+      <div class="foot"><a class="fill primary" href="{{ url_for('overview') }}">Go to Activity</a></div>
     {% endif %}
   </section>
 </div>
