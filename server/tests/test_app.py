@@ -885,3 +885,47 @@ def test_the_timeline_is_one_bar_of_consecutive_segments_and_the_summary_adds_up
     assert 'id="sw-detailed" class="page" >' in detailed and "Off task during a sprint" in detailed
     # The one summary card: 35 minutes away of 2 hours tracked.
     assert "35m 00s away" in detailed and "of 2h 00m tracked" in detailed and "29<small>%</small>" in detailed
+
+
+def test_the_four_details_pages_show_the_same_day_and_person(w):
+    admin = w.household("mum@example.com")
+    mia, leo = w.add_kid(admin, "Mia"), w.add_kid(admin, "Leo")
+    mac, leo_mac = w.pair(admin, mia, name="Mia's Mac"), w.pair(admin, leo, name="Leo's Mac", login="leo")
+    c = w.browser()
+    upload_sprint(c, mac, session_id(tail="mia111"), site="espn.com", away=120.0, title="Scores")
+    upload_sprint(c, leo_mac, session_id(tail="leo222"), site="roblox.com", away=300.0)
+    c.post("/api/search", json={"query": "NBA scores"}, headers=mac)
+    c.post("/api/search", json={"query": "photosynthesis"}, headers=mac)
+    c.post("/api/dispute", json={"host": "youtube.com", "reason": "physics lecture for class", "minutes": 30, "id": "r1"}, headers=mac)
+    day = today()
+    get = lambda page, who=mia: admin.get(f"/dashboard/day/{day}/{page}?who={who}")
+    # Each card on the activity page links to its details page, for the same day and person.
+    front = admin.get(f"/dashboard/day/{day}?who={mia}").get_data(as_text=True)
+    for page in ("sprints", "searches", "requests", "switches"):
+        assert f'/dashboard/day/{day}/{page}?who={mia}' in front
+        reply = get(page)
+        assert reply.status_code == 200
+        text = reply.get_data(as_text=True)
+        assert "Mia&#39;s day" in text and f'href="/dashboard/day/{day}?who={mia}"' in text  # the back button
+        assert "roblox.com" not in text  # never the other kid's records
+    sprints = get("sprints").get_data(as_text=True)
+    assert "Sprints" in sprints and "92%" in sprints and "Focused across all sprints" in sprints and "25 min" in sprints
+    assert "espn.com at" in sprints and "for 2m 00s." in sprints  # the switch away, in words
+    assert re.findall(r'<i class="(on|off|bad)"', sprints)[:3] in (["on", "bad", "on"], ["on", "off", "on"])  # the sprint as one bar
+    searches = get("searches").get_data(as_text=True)
+    assert "NBA scores" in searches and "photosynthesis" not in searches and "private topics are never recorded" in searches
+    assert ">2</div><div class=\"k\">Searches" in searches and ">1</div><div class=\"k\">For work" in searches
+    requests = get("requests").get_data(as_text=True)
+    assert "youtube.com" in requests and "physics lecture for class" in requests and "Approved" in requests and "30 min" in requests
+    switches = get("switches").get_data(as_text=True)
+    assert "espn.com" in switches and "2m 00s" in switches and 'id="viewer"' in switches and "Of tracked time" in switches
+    # Leo's pages are Leo's; an unknown page or a bad day is not found; a signed-out visitor is sent to sign in.
+    assert "roblox.com" in get("switches", leo).get_data(as_text=True) and "espn.com" not in get("switches", leo).get_data(as_text=True)
+    assert admin.get(f"/dashboard/day/{day}/everything").status_code == 404
+    assert admin.get("/dashboard/day/not-a-day/sprints").status_code == 404
+    assert w.browser().get(f"/dashboard/day/{day}/switches").status_code == 302
+    # Another household, asking for Mia by her id, gets its own (empty) page, never hers.
+    other = w.household("dad@example.com")
+    w.add_kid(other, "Zed")
+    theirs = other.get(f"/dashboard/day/{day}/switches?who={mia}").get_data(as_text=True)
+    assert "espn.com" not in theirs and "Zed&#39;s day" in theirs

@@ -281,6 +281,10 @@ def register(app, svc, keep_days: int = 14):
         return day_view(day)
 
     def day_view(day):
+        return render_template("day.html", **day_context(day))
+
+    def day_context(day) -> dict:
+        """Everything the activity page and its four details pages show for one person's day."""
         start, lo, hi = day_bounds(day)
         view = chosen()
         sessions = sessions_between(lo, hi, view)
@@ -314,8 +318,8 @@ def register(app, svc, keep_days: int = 14):
         sums["word"] = {"good": "Hardly at all", "warn": "A little", "bad": "A lot"}[sums["level"]] if sums["tracked"] else "Nothing tracked"
         sums["ticks"] = round(min(1.0, sums["away"] / sums["tracked"]) * 40) if sums["tracked"] else 0  # of 40 marks
         show = "summary" if request.args.get("view") == "summary" else "detailed"
-        return render_template(
-            "day.html", day=day, title=start.strftime("%A %-d %B %Y"), date_label=start.strftime("%A %-d %B"),
+        return dict(
+            day=day, title=start.strftime("%A %-d %B %Y"), date_label=start.strftime("%A %-d %B"),
             date_short=start.strftime("%a %-d %B"), totals=sums, view=view, several=several, show=show,
             switch_totals=switch_totals(switches),
             is_today=is_today, weeks=four_weeks(view, day), timeline=day_timeline(sessions, start),
@@ -323,11 +327,63 @@ def register(app, svc, keep_days: int = 14):
             previous=(start - timedelta(days=1)).strftime("%Y-%m-%d"),
             following=(start + timedelta(days=1)).strftime("%Y-%m-%d") if start + timedelta(days=1) <= datetime.now(zone()) else None,
             sprints=[dict(s, clock=local(s["start"]).strftime("%-I:%M %p"),
-                          span=f"{local(s['start']).strftime('%-I:%M')} – {local(s['until']).strftime('%-I:%M %p').lower()}")
+                          span=f"{local(s['start']).strftime('%-I:%M')} – {local(s['until']).strftime('%-I:%M %p').lower()}",
+                          **sprint_detail(s))
                      for s in sessions if not s["ambient"]],
             switches=switches, requests=requests_today,
             search_counts={k: sum(1 for x in day_searches if x["label"] == k) for k in ("work", "distraction", "personal")},
             searches=[x for x in day_searches if x["label"] == "distraction"])
+
+    def sprint_detail(s: dict) -> dict:
+        """What the Sprints details page adds: the sprint as a bar of consecutive on-task and away stretches,
+        how long it lasted, and each switch away in words."""
+        begin, until = parse(s["start"]), parse(s["until"])
+        bar, at, lines = [], begin, []
+        for e in sorted(s["events"], key=lambda e: e["startedAt"]):
+            e0, e1 = max(parse(e["startedAt"]), at), min(parse(e["endedAt"]), until)
+            if e1 <= e0:
+                continue
+            if e0 > at:
+                bar.append({"kind": "on", "weight": (e0 - at).total_seconds()})
+            bad = e.get("category") == "distraction"
+            bar.append({"kind": "bad" if bad else "off", "weight": (e1 - e0).total_seconds()})
+            lines.append(f"{'Distraction' if bad else 'Off task'}: {e.get('host') or e.get('appName', '')} at "
+                         f"{local(e['startedAt']).strftime('%-I:%M %p').lower()} for {duration(e.get('durationSeconds', 0))}.")
+            at = e1
+        if until > at or not bar:
+            bar.append({"kind": "on", "weight": max(1.0, (until - at).total_seconds())})
+        return {"bar": bar, "lasted": duration(s["elapsed"]), "lines": lines,
+                "when": f"{local(s['start']).strftime('%-I:%M %p').lower()} to {local(s['until']).strftime('%-I:%M %p').lower()}"}
+
+    DETAILS = {"sprints": "Sprints", "searches": "Web searches", "requests": '"Needed for work" requests', "switches": "Every switch away"}
+
+    @app.get("/dashboard/day/<day>/<any(sprints, searches, requests, switches):page>")
+    @signed_in
+    def day_details(day, page):
+        """One card of the activity page, larger: the same day, the same person, the same data."""
+        ctx = day_context(day)
+        t, sprints, counts = ctx["totals"], ctx["sprints"], ctx["search_counts"]
+        today = "today" if ctx["is_today"] else "this day"
+        if page == "sprints":
+            spent, away = sum(x["elapsed"] for x in sprints), sum(x["away"] for x in sprints)
+            focus = int(round(max(0.0, spent - away) / spent * 100)) if spent else 0
+            tiles = [(str(len(sprints)), f"Sprint{'s' if len(sprints) != 1 else ''} {today}", ""), (duration(spent), "Time in sprints", ""),
+                     (f"{focus}%" if sprints else "–", "Focused across all sprints", level(1 - focus / 100) if sprints else "")]
+        elif page == "searches":
+            total = counts["work"] + counts["distraction"] + counts["personal"]
+            tiles = [(str(total), f"Search{'es' if total != 1 else ''} {today}", ""), (str(counts["work"]), "For work", "good"),
+                     (str(counts["distraction"]), "Distraction", "bad" if counts["distraction"] else "")]
+        elif page == "requests":
+            asked = ctx["requests"]
+            approved = [r for r in asked if r.get("decision") != "deny"]
+            granted = sum(int(r.get("grantedMinutes") or 0) for r in asked if r.get("decision") == "approve_temporary")
+            tiles = [(str(len(asked)), f"Request{'s' if len(asked) != 1 else ''} {today}", ""), (str(len(approved)), "Approved", "good" if approved else ""),
+                     (f"{granted} min", "Time granted", "")]
+        else:
+            tiles = [(str(len(ctx["switches"])), f"Switch{'es' if len(ctx['switches']) != 1 else ''} away", ""),
+                     (duration(t["away"]), "Time away", t["level"] if t["tracked"] else ""),
+                     (f"{t['percent']}%", "Of tracked time", t["level"] if t["tracked"] else "")]
+        return render_template("details.html", page=page, heading=DETAILS[page], tiles=tiles, **ctx)
 
     @app.get("/dashboard/sites")
     @signed_in

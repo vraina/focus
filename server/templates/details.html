@@ -1,0 +1,143 @@
+{% extends "base.html" %}
+{% set active = 'days' %}
+{% block title %}{{ heading }} · {{ view.title }} · {{ title }} · YoungWonks Focus{% endblock %}
+{% block head %}
+<style>
+main{font-size:16px}
+.page{display:flex;flex-direction:column;gap:18px}
+.back{display:inline-flex;align-items:center;gap:8px;height:40px;padding:0 16px;border-radius:99px;border:1px solid var(--line);background:var(--surface);color:var(--ink);font-size:14px;font-weight:600}
+.back:hover{text-decoration:none;background:var(--raised)}
+.page h1{font-size:72px;letter-spacing:-3px;margin:0;overflow-wrap:anywhere}
+.tiles3{display:flex;gap:16px;flex-wrap:wrap} .tiles3 .card{flex:1 1 220px;padding:22px 26px}
+.tiles3 .v{font-family:var(--display);font-size:56px;line-height:1;font-weight:700;letter-spacing:-2px;font-variant-numeric:tabular-nums} .tiles3 .k{font-size:15px;color:var(--soft);margin-top:6px}
+.big.card{border-radius:28px;padding:30px;display:flex;flex-direction:column;gap:20px}
+.top{display:flex;align-items:flex-start;gap:20px;flex-wrap:wrap} .top .main{flex:1 1 400px;min-width:0}
+.pill.lg{font-size:13px;padding:4px 12px} .pill.xl{font-size:18px;padding:8px 18px}
+.h{font-family:var(--display);font-size:34px;line-height:1.15;font-weight:700;letter-spacing:-1px;margin-top:10px;overflow-wrap:anywhere} .h.x{font-size:38px}
+.sub{font-size:17px;color:var(--soft);margin-top:4px}
+.focus{text-align:right} .focus .v{font-family:var(--display);font-size:80px;line-height:.95;font-weight:700;letter-spacing:-3px} .focus .k{font-size:15px;color:var(--soft)}
+.sbar{display:flex;height:28px;border-radius:99px;overflow:hidden;background:var(--line)}
+.sbar .on{background:var(--good-fill)} .sbar .off{background:var(--warn-fill);min-width:3px} .sbar .bad{background:var(--bad-fill);min-width:3px}
+.four{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.four>div{background:var(--raised);border-radius:16px;padding:14px 16px;min-width:0} .four .k{font-size:13px;font-weight:600;color:var(--soft)} .four .v{font-family:var(--display);font-size:24px;font-weight:700;white-space:nowrap}
+.note{font-size:16px;color:var(--soft)}
+.time{font-family:var(--display);font-size:40px;font-weight:700;letter-spacing:-1px;white-space:nowrap}
+.reason{padding:22px 26px;background:var(--raised);border-radius:20px} .reason .k{font-size:13px;font-weight:600;color:var(--soft)} .reason .v{font-size:26px;line-height:1.35;font-weight:500;margin-top:4px;overflow-wrap:anywhere}
+.away{font-family:var(--display);font-size:64px;line-height:1;font-weight:700;letter-spacing:-2.5px;white-space:nowrap}
+.shots{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.shot{position:relative;display:block;aspect-ratio:16/10;border:1px solid var(--line);border-radius:18px;overflow:hidden;background:var(--canvas);cursor:zoom-in;padding:0;width:100%}
+.shot img{display:block;width:100%;height:100%;object-fit:cover;object-position:top left}
+.shot .tag{position:absolute;left:14px;top:14px;background:rgba(11,12,16,.78);color:#f2f3f7;font-size:14px;font-weight:700;padding:5px 12px;border-radius:99px}
+.shot .play{display:flex;align-items:center;justify-content:center;height:100%;color:var(--soft);font-size:40px}
+@media (max-width:760px){
+  main{font-size:15px} .page{gap:14px} .page h1{font-size:44px;letter-spacing:-1.8px}
+  .tiles3{gap:10px} .tiles3 .card{flex:1 1 30%;padding:14px 16px;min-width:0} .tiles3 .v{font-size:22px;letter-spacing:-.6px;white-space:nowrap} .tiles3 .k{font-size:12.5px}
+  .big.card{padding:18px;border-radius:22px;gap:14px} .top{gap:10px}
+  .h,.h.x{font-size:24px;letter-spacing:-.6px} .sub{font-size:14px}
+  .top .main{flex-basis:100%} .focus{text-align:left;display:flex;align-items:baseline;gap:8px} .focus .v{font-size:48px;letter-spacing:-2px}
+  .sbar{height:22px} .four{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px} .four .v{font-size:19px}
+  .time{font-size:24px} .reason{padding:14px 16px;border-radius:16px} .reason .v{font-size:19px}
+  .away{font-size:40px;letter-spacing:-1.5px} .pill.xl{font-size:14px;padding:6px 12px}
+  .shots{gap:8px} .shot{border-radius:12px} .shot .tag{left:8px;top:8px;font-size:11px;padding:3px 8px}
+}
+</style>
+{% endblock %}
+{% block body %}
+<div class="page">
+  <div class="row">
+    <a class="back" href="{{ url_for('day_page', day=day, **view.args) }}"><svg aria-hidden="true" width="8" height="14" viewBox="0 0 8 14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 1.5L1.5 7l5 5.5"/></svg>{{ view.title }}</a>
+    <div class="eyebrow">{{ date_label }}</div>
+  </div>
+  <h1>{{ heading }}</h1>
+  {% if view.key == 'me' %}<p class="muted small" style="margin:-6px 0 0">Only you can see your own records.</p>{% endif %}
+
+  <div class="tiles3">
+    {% for v, k, tone in tiles %}<div class="card"><div class="v {{ tone }}">{{ v }}</div><div class="k">{{ k }}</div></div>{% endfor %}
+  </div>
+
+  {% if page == 'sprints' %}
+    {% for s in sprints %}
+    {% set tone = level(1 - s.focus / 100) %}
+    <section class="card big">
+      <div class="top">
+        <div class="main">
+          <div><span class="pill lg {{ 'good' if s.status == 'Completed' else ('bad' if s.status == 'Interrupted' else ('brand' if s.status == 'In progress' else 'warn')) }}">{{ s.status }}</span></div>
+          <div class="h">{{ s.task }}</div>
+          <div class="sub">{{ s.when }} · {{ s.who }}</div>
+        </div>
+        <div class="focus"><div class="v {{ tone }}">{{ s.focus }}%</div><div class="k">focused</div></div>
+      </div>
+      <div class="sbar" role="img" aria-label="{{ s.focus }} percent focused{% if s.lines %}. {{ s.lines|join(' ') }}{% endif %}">
+        {% for g in s.bar %}<i class="{{ g.kind }}" style="flex:{{ g.weight }} 0 0"></i>{% endfor %}
+      </div>
+      <div class="four">
+        <div><div class="k">Planned</div><div class="v">{{ 'Until stopped' if s.open else (s.planned // 60)|string + ' min' }}</div></div>
+        <div><div class="k">Lasted</div><div class="v">{{ s.lasted }}</div></div>
+        <div><div class="k">Switches</div><div class="v">{{ s.events|length }}</div></div>
+        <div><div class="k">Time away</div><div class="v">{{ duration(s.away) }}</div></div>
+      </div>
+      <div class="note">{% if s.lines %}{% for line in s.lines %}{{ line }}{{ ' ' if not loop.last }}{% endfor %}{% else %}No switches away during this sprint.{% endif %}</div>
+      {% if s.added or s.removed %}<div class="note"><span class="pill warn">Apps changed for this sprint</span>
+        {% if s.added %} allowed: <b>{{ s.added|join(", ") }}</b>{% endif %}{% if s.removed %} · not allowed: <b>{{ s.removed|join(", ") }}</b>{% endif %}</div>{% endif %}
+    </section>
+    {% else %}<section class="card big"><div class="note">No sprints this day.</div></section>{% endfor %}
+
+  {% elif page == 'searches' %}
+    {% for x in searches %}
+    <section class="card big" style="flex-direction:row;align-items:center;gap:24px;flex-wrap:wrap">
+      <div style="flex:1 1 420px;min-width:0">
+        <div><span class="pill lg bad">Distraction</span></div>
+        <div class="h x">{{ x.text }}</div>
+        <div class="sub" style="margin-top:6px">{{ x.reason }}{% if x.task %} · during: {{ x.task }}{% endif %}{% if several and x.who %} · {{ x.who }}{% endif %}</div>
+      </div>
+      <div class="time">{{ x.localTime }}</div>
+    </section>
+    {% else %}<section class="card big"><div class="note">No distraction searches this day.</div></section>{% endfor %}
+    <div class="note" style="padding:4px 6px">Only distraction searches are listed. Work searches are counted, and private topics are never recorded.</div>
+
+  {% elif page == 'requests' %}
+    {% for r in requests %}
+    <section class="card big" style="gap:18px">
+      <div class="top">
+        <div class="main"><div class="h x" style="margin-top:0">{{ r.host }}</div>
+          <div class="sub">Asked at {{ r.localTime }} · {{ r.who }}</div></div>
+        <span class="pill xl {{ 'bad' if r.decision == 'deny' else 'good' }}">{{ r.decisionLabel }}{% if r.decision == 'approve_temporary' %} for {{ r.grantedMinutes }} min{% endif %}</span>
+      </div>
+      <div class="reason"><div class="k">The reason given</div><div class="v">{{ r.reason }}</div></div>
+      <div class="sub" style="margin:0">{{ r.explanation }}</div>
+    </section>
+    {% else %}<section class="card big"><div class="note">No requests this day.</div></section>{% endfor %}
+
+  {% else %}
+    {% if pictures_gone and switches %}<p class="muted small" style="margin:0">Pictures are kept for {{ keep_days }} days, so this day is shown without them. Every switch is still listed.</p>{% endif %}
+    {% for e in switches %}
+    {% set bad = e.category == 'distraction' %}
+    <section class="card big" style="padding:26px;gap:18px" id="sw-{{ e.id }}">
+      <div class="top" style="align-items:flex-end">
+        <div class="main">
+          <div><span class="pill lg {{ 'bad' if bad else 'warn' }}">{{ 'Distraction' if bad else 'Off task during a sprint' }}</span></div>
+          <div class="h x" style="margin-top:8px">{{ e.site }}</div>
+          <div class="sub" style="margin:0">{% if e.detail %}{{ e.detail }} · {% endif %}{% if e.during %}during: {{ e.during }} · {% endif %}{{ e.started_short }} to {{ e.ended_short }}{% if e.who %} · {{ e.who }}{% endif %}</div>
+        </div>
+        <div class="away {{ 'bad' if bad else 'warn' }}">{{ e.away }}</div>
+      </div>
+      {% if e.media %}
+      <div class="shots">
+        {% for m in e.media %}
+        {% set role = 'Start' if m.role == 'First seconds' else 'End' %}
+        <button class="shot" type="button" data-src="{{ m.url }}" data-kind="{{ m.kind }}" data-role="{{ m.role }}" data-site="{{ e.site }}"
+                data-detail="{{ e.detail }}" data-category="{{ 'Distraction' if bad else 'Off task' }}"
+                data-started="{{ e.started }}" data-away="{{ e.away }}" data-ended="{{ e.ended }}"
+                aria-label="Open the {{ role|lower }} picture for {{ e.site }}">
+          {% if m.kind == 'video' %}<span class="play">▶</span>{% else %}<img src="{{ m.url }}" loading="lazy" alt="{{ m.role }} on {{ e.site }}">{% endif %}
+          <span class="tag">{{ role }} · {{ e.started_short if role == 'Start' else e.ended_short }}</span>
+        </button>
+        {% endfor %}
+      </div>
+      {% endif %}
+    </section>
+    {% else %}<section class="card big"><b class="good">No switches away recorded this day.</b></section>{% endfor %}
+  {% endif %}
+</div>
+{% if page == 'switches' %}{% include "_viewer.html" %}{% endif %}
+{% endblock %}

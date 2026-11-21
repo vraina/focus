@@ -123,20 +123,7 @@ html{scroll-padding-top:20px;scroll-behavior:smooth}
   .shots{gap:8px;flex-basis:100%} .shot{border-radius:12px} .shot .tag{left:8px;top:8px;font-size:11px;padding:3px 8px}
   .trow{display:grid;grid-template-columns:1fr auto;gap:8px 10px;padding:14px 0} .trow .split{grid-column:1/-1;grid-row:2;height:10px} .trow .tot{width:auto;font-size:24px}
   .trow .name b{font-size:18px}
-  #viewer{padding:10px;gap:8px} #viewer .info{gap:14px;padding:10px 12px} #viewer .info .v{font-size:14px}
-  #viewer .mid{gap:4px} #viewer button.round{width:38px;height:38px}
 }
-#viewer{position:fixed;inset:0;background:rgba(0,0,0,.93);z-index:20;display:none;flex-direction:column;padding:16px;gap:12px;color:#fff}
-#viewer.open{display:flex}
-#viewer .top{display:flex;align-items:center;gap:10px;flex-wrap:wrap} #viewer .site{font-size:19px;font-weight:700}
-#viewer .mid{flex:1;display:flex;align-items:center;gap:10px;min-height:0}
-#viewer .mid .frame{flex:1;height:100%;display:flex;align-items:center;justify-content:center;min-width:0}
-#viewer img,#viewer video{max-width:100%;max-height:100%;border-radius:10px}
-#viewer button.round{width:44px;height:44px;border-radius:50%;border:0;background:rgba(255,255,255,.16);color:#fff;font-size:20px;cursor:pointer;flex:none}
-#viewer button.round:disabled{opacity:.25;cursor:default}
-#viewer .info{display:flex;gap:26px;flex-wrap:wrap;background:rgba(255,255,255,.10);border-radius:14px;padding:12px 18px}
-#viewer .info .k{font-size:10px;letter-spacing:.6px;text-transform:uppercase;opacity:.6;font-weight:700} #viewer .info .v{font-size:17px;font-weight:700;font-variant-numeric:tabular-nums}
-#viewer .vp{background:rgba(255,255,255,.18);font-size:11px;font-weight:700;padding:3px 9px;border-radius:99px}
 </style>
 {% endblock %}
 {% block body %}
@@ -232,7 +219,7 @@ html{scroll-padding-top:20px;scroll-behavior:smooth}
 
 <div class="cols">
   <section class="card third">
-    <div class="row" style="gap:10px"><h2 class="title" style="flex:1">Sprints</h2></div>
+    <div class="row" style="gap:10px"><h2 class="title" style="flex:1">Sprints</h2><a class="more" href="{{ url_for('day_details', day=day, page='sprints', **view.args) }}" aria-label="Sprints details">Details</a></div>
     {% for s in sprints %}
     <div class="sprint">
       <div class="t"><b>{{ s.task }}</b><span class="pct {{ level(1 - s.focus / 100) }}">{{ s.focus }}%</span></div>
@@ -247,7 +234,8 @@ html{scroll-padding-top:20px;scroll-behavior:smooth}
   <section class="card third">
     <div class="row" style="gap:8px"><h2 class="title" style="flex:1">Web searches</h2>
       <span class="pill good">{{ search_counts.work }} work</span><span class="pill {{ 'bad' if search_counts.distraction else '' }}">{{ search_counts.distraction }} distraction</span>
-      {% if search_counts.personal %}<span class="pill">{{ search_counts.personal }} private</span>{% endif %}</div>
+      {% if search_counts.personal %}<span class="pill">{{ search_counts.personal }} private</span>{% endif %}
+      <a class="more" href="{{ url_for('day_details', day=day, page='searches', **view.args) }}" aria-label="Web searches details">Details</a></div>
     {% for x in searches %}
     <div class="item"><div style="flex:1;min-width:0"><b>{{ x.text }}</b><div class="meta">{{ x.reason }}{% if x.task %} · during: {{ x.task }}{% endif %}</div></div>
       <div class="meta num" style="font-weight:400;white-space:nowrap">{{ x.localTime }}{% if several and x.who %}<br>{{ x.who }}{% endif %}</div></div>
@@ -256,7 +244,7 @@ html{scroll-padding-top:20px;scroll-behavior:smooth}
   </section>
 
   <section class="card third">
-    <div class="row" style="gap:10px"><h2 class="title" style="flex:1">"Needed for work" requests</h2></div>
+    <div class="row" style="gap:10px"><h2 class="title" style="flex:1">"Needed for work" requests</h2><a class="more" href="{{ url_for('day_details', day=day, page='requests', **view.args) }}" aria-label="Requests details">Details</a></div>
     {% for r in requests %}
     <div class="row" style="gap:8px"><b style="flex:1;font-weight:600;font-size:14.5px">{{ r.host }}</b>
       <span class="pill {{ 'bad' if r.decision == 'deny' else 'good' }}">{{ r.decisionLabel }}{% if r.decision == 'approve_temporary' %} · {{ r.grantedMinutes }} min{% endif %}</span></div>
@@ -269,6 +257,7 @@ html{scroll-padding-top:20px;scroll-behavior:smooth}
 <div class="swhead">
   <h2 class="big">Every switch away</h2>
   <span class="muted small">{{ switches|length }} {{ 'today' if is_today else 'this day' }} · {{ duration(totals.away) }} away in all</span>
+  <a class="more" href="{{ url_for('day_details', day=day, page='switches', **view.args) }}" aria-label="Every switch away details">Details</a>
   <div class="seg" role="group" aria-label="How to show switches" id="sw-mode">
     <a href="{{ url_for(request.endpoint, view='summary', **dict(view.args, **request.view_args)) }}" data-mode="summary" class="{{ 'on' if show == 'summary' }}" aria-pressed="{{ 'true' if show == 'summary' else 'false' }}" role="button">Summary</a>
     <a href="{{ url_for(request.endpoint, **dict(view.args, **request.view_args)) }}" data-mode="detailed" class="{{ 'on' if show == 'detailed' }}" aria-pressed="{{ 'true' if show == 'detailed' else 'false' }}" role="button">Detailed</a>
@@ -348,51 +337,6 @@ html{scroll-padding-top:20px;scroll-behavior:smooth}
   }
 })();
 </script>
-<div id="viewer" role="dialog" aria-label="Picture viewer">
-  <div class="top"><span class="site" id="v-site"></span><span class="vp" id="v-category"></span><span class="vp" id="v-role"></span>
-    <span class="muted" id="v-detail" style="color:rgba(255,255,255,.7);font-size:13px"></span>
-    <span style="margin-left:auto;font-weight:700" id="v-count"></span><button class="round" id="v-close" title="Close (Esc)">✕</button></div>
-  <div class="mid"><button class="round" id="v-prev" title="Previous">‹</button><div class="frame" id="v-frame"></div><button class="round" id="v-next" title="Next">›</button></div>
-  <div class="info">
-    <div><div class="k">Date</div><div class="v">{{ title }}</div></div>
-    <div><div class="k">Started</div><div class="v" id="v-started"></div></div>
-    <div><div class="k">Away for</div><div class="v" id="v-away"></div></div>
-    <div><div class="k">Ended</div><div class="v" id="v-ended"></div></div>
-  </div>
-</div>
-<script>
-(function () {
-  var shots = Array.prototype.slice.call(document.querySelectorAll('.shot'));
-  var viewer = document.getElementById('viewer'), frame = document.getElementById('v-frame'), at = 0;
-  function set(id, text) { document.getElementById(id).textContent = text; }
-  function show(i) {
-    at = i;
-    var d = shots[i].dataset, node;
-    frame.textContent = '';
-    if (d.kind === 'video') { node = document.createElement('video'); node.controls = true; node.autoplay = true; }
-    else { node = document.createElement('img'); node.alt = d.role + ' on ' + d.site; }
-    node.src = d.src;
-    frame.appendChild(node);
-    set('v-site', d.site); set('v-category', d.category); set('v-role', d.role); set('v-detail', d.detail);
-    set('v-started', d.started); set('v-away', d.away); set('v-ended', d.ended);
-    set('v-count', (i + 1) + ' of ' + shots.length);
-    document.getElementById('v-prev').disabled = i === 0;
-    document.getElementById('v-next').disabled = i === shots.length - 1;
-    viewer.classList.add('open');
-  }
-  function close() { viewer.classList.remove('open'); frame.textContent = ''; }
-  shots.forEach(function (el, i) { el.addEventListener('click', function () { show(i); }); });
-  document.getElementById('v-prev').addEventListener('click', function () { if (at > 0) show(at - 1); });
-  document.getElementById('v-next').addEventListener('click', function () { if (at < shots.length - 1) show(at + 1); });
-  document.getElementById('v-close').addEventListener('click', close);
-  viewer.addEventListener('click', function (e) { if (e.target === viewer || e.target.classList.contains('mid') || e.target.classList.contains('frame')) close(); });
-  document.addEventListener('keydown', function (e) {
-    if (!viewer.classList.contains('open')) return;
-    if (e.key === 'Escape') close();
-    if (e.key === 'ArrowLeft' && at > 0) show(at - 1);
-    if (e.key === 'ArrowRight' && at < shots.length - 1) show(at + 1);
-  });
-})();
-</script>
+{% include "_viewer.html" %}
 {% endblock %}
 

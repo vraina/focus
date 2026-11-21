@@ -1,0 +1,64 @@
+{# The full-size picture viewer: every .shot button on the page opens it. #}
+<style>
+#viewer{position:fixed;inset:0;background:rgba(0,0,0,.93);z-index:20;display:none;flex-direction:column;padding:16px;gap:12px;color:#fff}
+#viewer.open{display:flex}
+#viewer .top{display:flex;align-items:center;gap:10px;flex-wrap:wrap} #viewer .site{font-size:19px;font-weight:700}
+#viewer .mid{flex:1;display:flex;align-items:center;gap:10px;min-height:0}
+#viewer .mid .frame{flex:1;height:100%;display:flex;align-items:center;justify-content:center;min-width:0}
+#viewer img,#viewer video{max-width:100%;max-height:100%;border-radius:10px}
+#viewer button.round{width:44px;height:44px;border-radius:50%;border:0;background:rgba(255,255,255,.16);color:#fff;font-size:20px;cursor:pointer;flex:none}
+#viewer button.round:disabled{opacity:.25;cursor:default}
+#viewer .info{display:flex;gap:26px;flex-wrap:wrap;background:rgba(255,255,255,.10);border-radius:14px;padding:12px 18px}
+#viewer .info .k{font-size:10px;letter-spacing:.6px;text-transform:uppercase;opacity:.6;font-weight:700} #viewer .info .v{font-size:17px;font-weight:700;font-variant-numeric:tabular-nums}
+#viewer .vp{background:rgba(255,255,255,.18);font-size:11px;font-weight:700;padding:3px 9px;border-radius:99px}
+@media (max-width:760px){
+  #viewer{padding:10px;gap:8px} #viewer .info{gap:14px;padding:10px 12px} #viewer .info .v{font-size:14px}
+  #viewer .mid{gap:4px} #viewer button.round{width:38px;height:38px}
+}
+</style>
+<div id="viewer" role="dialog" aria-label="Picture viewer">
+  <div class="top"><span class="site" id="v-site"></span><span class="vp" id="v-category"></span><span class="vp" id="v-role"></span>
+    <span class="muted" id="v-detail" style="color:rgba(255,255,255,.7);font-size:13px"></span>
+    <span style="margin-left:auto;font-weight:700" id="v-count"></span><button class="round" id="v-close" title="Close (Esc)">✕</button></div>
+  <div class="mid"><button class="round" id="v-prev" title="Previous">‹</button><div class="frame" id="v-frame"></div><button class="round" id="v-next" title="Next">›</button></div>
+  <div class="info">
+    <div><div class="k">Date</div><div class="v">{{ title }}</div></div>
+    <div><div class="k">Started</div><div class="v" id="v-started"></div></div>
+    <div><div class="k">Away for</div><div class="v" id="v-away"></div></div>
+    <div><div class="k">Ended</div><div class="v" id="v-ended"></div></div>
+  </div>
+</div>
+<script>
+(function () {
+  var shots = Array.prototype.slice.call(document.querySelectorAll('.shot'));
+  var viewer = document.getElementById('viewer'), frame = document.getElementById('v-frame'), at = 0;
+  function set(id, text) { document.getElementById(id).textContent = text; }
+  function show(i) {
+    at = i;
+    var d = shots[i].dataset, node;
+    frame.textContent = '';
+    if (d.kind === 'video') { node = document.createElement('video'); node.controls = true; node.autoplay = true; }
+    else { node = document.createElement('img'); node.alt = d.role + ' on ' + d.site; }
+    node.src = d.src;
+    frame.appendChild(node);
+    set('v-site', d.site); set('v-category', d.category); set('v-role', d.role); set('v-detail', d.detail);
+    set('v-started', d.started); set('v-away', d.away); set('v-ended', d.ended);
+    set('v-count', (i + 1) + ' of ' + shots.length);
+    document.getElementById('v-prev').disabled = i === 0;
+    document.getElementById('v-next').disabled = i === shots.length - 1;
+    viewer.classList.add('open');
+  }
+  function close() { viewer.classList.remove('open'); frame.textContent = ''; }
+  shots.forEach(function (el, i) { el.addEventListener('click', function () { show(i); }); });
+  document.getElementById('v-prev').addEventListener('click', function () { if (at > 0) show(at - 1); });
+  document.getElementById('v-next').addEventListener('click', function () { if (at < shots.length - 1) show(at + 1); });
+  document.getElementById('v-close').addEventListener('click', close);
+  viewer.addEventListener('click', function (e) { if (e.target === viewer || e.target.classList.contains('mid') || e.target.classList.contains('frame')) close(); });
+  document.addEventListener('keydown', function (e) {
+    if (!viewer.classList.contains('open')) return;
+    if (e.key === 'Escape') close();
+    if (e.key === 'ArrowLeft' && at > 0) show(at - 1);
+    if (e.key === 'ArrowRight' && at < shots.length - 1) show(at + 1);
+  });
+})();
+</script>
