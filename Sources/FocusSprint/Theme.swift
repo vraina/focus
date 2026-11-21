@@ -287,16 +287,17 @@ struct Segments<Value: Hashable>: View {
 /// The main call to action: a solid accent pill. `wide` stretches it across the space it is given.
 struct PrimaryButtonStyle: ButtonStyle {
     var wide = true
+    var height: CGFloat = 50
     @Environment(\.isEnabled) private var enabled
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.system(size: 16, weight: .bold))
+            .font(.system(size: height < 50 ? 14 : 16, weight: .bold))
             .lineLimit(1)
             .foregroundStyle(enabled ? Theme.onBrand : Theme.soft)
-            .padding(.horizontal, 30)
+            .padding(.horizontal, height < 50 ? 24 : 30)
             .frame(maxWidth: wide ? .infinity : nil)
-            .frame(height: 50)
+            .frame(height: height)
             .background(enabled ? Theme.brand : Theme.track, in: PillShape())
             .contentShape(PillShape())
             .opacity(configuration.isPressed ? 0.85 : 1)
@@ -383,5 +384,53 @@ enum AppIcons {
         let image = NSWorkspace.shared.icon(forFile: url.path)
         cache[bundleId] = image
         return image
+    }
+}
+
+/// Where a code from the website is typed: large, evenly spaced letters, with a Paste button beside it.
+struct CodeField: View {
+    var placeholder = "XXXX-XXXX"
+    @Binding var code: String
+    var size: CGFloat = 26
+    var height: CGFloat = 58
+    var fill: Color = Theme.canvas
+    var paste = true
+    var onSubmit: () -> Void
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        HStack(spacing: 8) {
+            TextField(placeholder, text: $code)
+                .textFieldStyle(.plain)
+                .font(.system(size: size, weight: .bold, design: .monospaced))
+                .kerning(size > 20 ? 4 : 0)
+                .focused($focused)
+                .padding(.horizontal, 18)
+                .frame(height: height)
+                .background(fill, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Theme.brand, lineWidth: focused ? 2.5 : 1.5))
+                .onSubmit(onSubmit)
+                .accessibilityLabel("Code from the website")
+            if paste { Button("Paste") {
+                if let text = NSPasteboard.general.string(forType: .string) {
+                    code = String(text.trimmingCharacters(in: .whitespacesAndNewlines).prefix(32))
+                }
+            }
+            .buttonStyle(BoxButtonStyle(height: height))
+            .help("Paste the code from the clipboard") }
+        }
+    }
+}
+
+/// An outlined button with gently rounded corners, used beside a tall field.
+struct BoxButtonStyle: ButtonStyle {
+    var height: CGFloat = 58
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: 14, weight: .bold)).foregroundStyle(Theme.ink).lineLimit(1)
+            .padding(.horizontal, 20).frame(height: height)
+            .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(Theme.outline, lineWidth: 1.5))
+            .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .opacity(configuration.isPressed ? 0.7 : 1)
     }
 }

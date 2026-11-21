@@ -28,6 +28,8 @@ enum AdminWriter {
 /// The Account tab. Reports and settings live on the website; this screen only links the Mac to
 /// a member of a household and shows how the link is doing.
 struct SettingsView: View {
+    /// Development snapshots only: a made-up status to draw instead of the helper's.
+    var sample: HelperStatus?
     @State private var status = HelperStatus.load()
     @State private var code = ""
     @State private var deviceName = Host.current().localizedName ?? "Mac"
@@ -36,17 +38,18 @@ struct SettingsView: View {
     @State private var message: String?
     @State private var messageIsError = false
     private let poll = Ticker.every1
+    @FocusState private var nameFocused: Bool
 
     private var helperRunning: Bool { status?.isFresh == true }
     private var linked: Bool { status?.linked == true }
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Account").font(Theme.title(30))
+            VStack(alignment: .leading, spacing: 14) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Account").font(Theme.title(34)).kerning(-0.8).foregroundStyle(Theme.ink)
                     Text("Reports and settings are on the website. A computer is linked to a household once; each Mac login on it then belongs to one person.")
-                        .font(.system(size: 14)).foregroundStyle(.secondary)
+                        .font(.system(size: 14)).foregroundStyle(Theme.soft).fixedSize(horizontal: false, vertical: true)
                 }
                 if !helperRunning {
                     Notice(text: "The YoungWonks Focus helper is not answering on this Mac. Run the installer again from an administrator account."
@@ -61,8 +64,8 @@ struct SettingsView: View {
                            icon: messageIsError ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
                 }
             }
-            .padding(28)
-            .frame(maxWidth: 620, alignment: .leading)
+            .padding(EdgeInsets(top: 44, leading: 30, bottom: 24, trailing: 30))
+            .frame(maxWidth: 860, alignment: .leading)
             .frame(maxWidth: .infinity)
         }
         .onReceive(poll) { _ in refresh() }
@@ -85,89 +88,95 @@ struct SettingsView: View {
     // MARK: Not linked yet
 
     private var linkCard: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(spacing: 12) {
-                Image(systemName: "link")
-                    .font(.system(size: 18, weight: .bold)).foregroundStyle(.white)
-                    .frame(width: 44, height: 44).background(Theme.gradient, in: Circle())
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("Link this computer").font(Theme.title(18))
-                    Text("On the website, open Computers, pick whose login this is, and choose \"Get a code\".")
-                        .font(.system(size: 13)).foregroundStyle(.secondary)
-                }
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Link this computer").font(Theme.title(22)).foregroundStyle(Theme.ink)
+                Text("On the website, open Computers, pick whose login this is, and choose \"Get a code\".")
+                    .font(.system(size: 13)).foregroundStyle(Theme.soft)
             }
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 5) {
                 SectionLabel(text: "Code from the website")
-                TextField("XXXX-XXXX", text: $code)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 26, weight: .bold, design: .monospaced))
-                    .padding(12)
-                    .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                    .onSubmit(link)
+                CodeField(code: $code, onSubmit: link)
             }
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 5) {
                 SectionLabel(text: "Name for this computer")
                 TextField("e.g. Mia's MacBook", text: $deviceName)
-                    .textFieldStyle(.plain).font(.system(size: 15)).padding(10)
-                    .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .textFieldStyle(.plain).font(.system(size: 15))
+                    .focused($nameFocused)
+                    .padding(.horizontal, 16).frame(height: 44)
+                    .background(Theme.canvas, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .strokeBorder(nameFocused ? Theme.brand : Theme.outline, lineWidth: 1.5))
             }
-            Button(action: link) {
-                Label(waitingFor == nil ? "Link this computer" : "Linking…", systemImage: "link")
+            HStack(spacing: 14) {
+                Button(waitingFor == nil ? "Link this computer" : "Linking…", action: link)
+                    .buttonStyle(PrimaryButtonStyle(wide: false, height: 46))
+                    .disabled(waitingFor != nil || code.filter { $0.isLetter || $0.isNumber }.count < 8)
+                Text("No account password is ever typed on this computer. Until it is linked, everything recorded simply waits on this Mac.")
+                    .font(.system(size: 12)).foregroundStyle(Theme.soft).fixedSize(horizontal: false, vertical: true)
             }
-            .buttonStyle(PrimaryButtonStyle())
-            .disabled(waitingFor != nil || code.filter { $0.isLetter || $0.isNumber }.count < 8)
-            Text("No account password is ever typed on this computer. Until it is linked, everything recorded simply waits on this Mac.")
-                .font(.system(size: 12)).foregroundStyle(.secondary)
         }
-        .card()
+        .card(padding: 20)
     }
 
     // MARK: Linked
 
     private var linkedCard: some View {
         VStack(alignment: .leading, spacing: 14) {
-            HStack(spacing: 12) {
+            HStack(spacing: 16) {
                 Image(systemName: status?.linkProblem == nil ? "checkmark" : "exclamationmark")
-                    .font(.system(size: 18, weight: .bold)).foregroundStyle(.white)
-                    .frame(width: 44, height: 44)
+                    .font(.system(size: 22, weight: .bold)).foregroundStyle(.white)
+                    .frame(width: 56, height: 56)
                     .background(status?.linkProblem == nil ? Theme.good : Theme.warn, in: Circle())
+                    .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(status?.memberName.map { $0.isEmpty ? "Linked" : "This login is \($0)" } ?? "Linked").font(Theme.title(18))
+                    Text(status?.memberName.map { $0.isEmpty ? "Linked" : "This login is \($0)" } ?? "Linked")
+                        .font(Theme.title(24)).foregroundStyle(Theme.ink)
                     Text([status?.deviceName.map { "\"\($0)\"" }, status?.account.map { "household account \($0)" }].compactMap { $0 }.joined(separator: " · "))
-                        .font(.system(size: 13)).foregroundStyle(.secondary)
+                        .font(.system(size: 13)).foregroundStyle(Theme.soft)
                 }
             }
             if let problem = status?.linkProblem { Notice(text: problem, tint: Theme.warn) }
             HStack(spacing: 12) {
-                StatTile(title: "Waiting to send", value: "\(status?.pending ?? 0)", icon: "tray.and.arrow.up")
-                StatTile(title: "Last sent", value: status?.lastUploadAt.map { $0.formatted(date: .omitted, time: .shortened) } ?? "—",
-                         icon: "clock")
+                figure("Waiting to send", "\(status?.pending ?? 0)")
+                figure("Last sent", status?.lastUploadAt.map { $0.formatted(date: .omitted, time: .shortened) } ?? "—")
             }
             if let error = status?.lastError, status?.linkProblem == nil {
                 Text("Cannot reach the service right now (\(error)). Everything is kept here and sent when it is back.")
-                    .font(.system(size: 12)).foregroundStyle(.secondary)
+                    .font(.system(size: 12)).foregroundStyle(Theme.soft)
             }
-            HStack {
+            HStack(spacing: 12) {
                 Button("Open the website") {
                     if let url = URL(string: ServiceConfig.baseURL) { NSWorkspace.shared.open(url) }
                 }
-                .controlSize(.large)
+                .buttonStyle(PrimaryButtonStyle(wide: false, height: 44))
                 Spacer()
                 Button("Unlink this computer…", action: unlink)
-                    .buttonStyle(.plain).font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.bad)
+                    .buttonStyle(OutlineButtonStyle(tint: Theme.badText, height: 44))
             }
             Text(status?.isAdult == true
                  ? "Your records are private: only you can see them, on your own sign-in. Unlinking the computer needs the Mac administrator password and affects every login on it."
                  : "A household admin can see what this login records, and can change whose login it is on the website. Unlinking the computer needs the Mac administrator password.")
-                .font(.system(size: 12)).foregroundStyle(.secondary)
+                .font(.system(size: 12)).foregroundStyle(Theme.soft).fixedSize(horizontal: false, vertical: true)
         }
-        .card()
+        .card(padding: 20)
+    }
+
+    private func figure(_ title: String, _ value: String) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text(title).font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.soft)
+            Text(value).font(Theme.number(28)).foregroundStyle(Theme.ink).lineLimit(1).minimumScaleFactor(0.6)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 16).padding(.vertical, 12)
+        .background(Theme.raised, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .accessibilityElement(children: .combine)
     }
 
     // MARK: Actions
 
     private func refresh() {
-        status = HelperStatus.load()
+        status = sample ?? HelperStatus.load()
         guard let id = waitingFor else { return }
         if status?.linked == true, PairingResult.load()?.id != id, Date().timeIntervalSince(startedWaiting) > 5 {
             // The computer is linked but the helper's note about this attempt is missing: say so plainly.

@@ -125,6 +125,7 @@ struct ContentView: View {
     @State var pane: Pane = Pane(rawValue: ProcessInfo.processInfo.environment["FOCUSSPRINT_PANE"] ?? "") ?? .focus
     /// Development snapshots only: made-up app lists for the Apps screen.
     var sampleApps: AppList?
+    var sampleStatus: HelperStatus?
 
     var body: some View {
         HStack(spacing: 0) {
@@ -135,7 +136,7 @@ struct ContentView: View {
                 case .focus: SprintView()
                 case .history: HistoryView()
                 case .apps: AppsView(sample: sampleApps)
-                case .parent: SettingsView()
+                case .parent: SettingsView(sample: sampleStatus)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)

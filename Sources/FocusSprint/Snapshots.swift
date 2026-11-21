@@ -55,6 +55,17 @@ enum Snapshots {
             Shot(name: "3c-focus-break", size: window, prepare: { engine.debugPreview("break") }, view: { app(.focus) }),
             Shot(name: "4-history", size: CGSize(width: 1040, height: 900), prepare: { engine.debugPreview("idle") }, view: { app(.history) }),
             Shot(name: "5-parent", size: window, view: { app(.parent) }),
+            Shot(name: "5e-account-linked", size: window, view: {
+                var status = HelperStatus(linked: true, deviceName: "Den iMac", pending: 0)
+                status.memberName = "Mia"; status.memberKind = "kid"; status.account = "m•••@example.com"
+                status.lastUploadAt = Date().addingTimeInterval(-240); status.updatedAt = Date()
+                return AnyView(ContentView(pane: .parent, sampleStatus: status).environmentObject(engine))
+            }),
+            Shot(name: "5f-account-unlinked", size: window, view: {
+                var status = HelperStatus(linked: false, deviceName: nil, pending: 0)
+                status.updatedAt = Date()
+                return AnyView(ContentView(pane: .parent, sampleStatus: status).environmentObject(engine))
+            }),
             Shot(name: "5b-apps", size: CGSize(width: 1040, height: 900), prepare: { engine.debugPreview("idle") }, view: { app(.apps) }),
             Shot(name: "5c-apps-admin", size: CGSize(width: 1040, height: 1000), prepare: { engine.debugPreview("idle") },
                  view: { AnyView(ContentView(pane: .apps, sampleApps: AppList(apps: sampleApps, kids: sampleApps, canEdit: true)).environmentObject(engine)) }),
@@ -88,6 +99,14 @@ enum Snapshots {
                 var status = HelperStatus(linked: true, deviceName: "Den iMac", pending: 3)
                 status.profiles = [.init(id: "1", name: "Aarav"), .init(id: "2", name: "Mia"), .init(id: "3", name: "Leo")]
                 return AnyView(WhoAreYouView(status: status))
+            }),
+            Shot(name: "15b-who-adult", size: CGSize(width: 1040, height: 760), view: {
+                var status = HelperStatus(linked: true, deviceName: "Den iMac", pending: 3)
+                status.profiles = [.init(id: "1", name: "Aarav"), .init(id: "2", name: "Mia")]
+                return AnyView(WhoAreYouView(status: status, startAsAdult: true))
+            }),
+            Shot(name: "15c-who-none", size: CGSize(width: 1040, height: 760), view: {
+                AnyView(WhoAreYouView(status: HelperStatus(linked: true, deviceName: "Den iMac", pending: 0)))
             }),
             Shot(name: "AppIcon", size: CGSize(width: 1024, height: 1024), view: { AnyView(AppIconArt()) }),
         ]
