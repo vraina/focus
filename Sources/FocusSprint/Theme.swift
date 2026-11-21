@@ -29,6 +29,13 @@ enum Theme {
     static let badFill = dyn(0xd9434a, 0xcf3740)     // solid red behind white text
     static let track = dyn(0x262a36, 0xe2e4ea)       // the unused part of a circle or bar
 
+    // The picture viewer is dark in both appearances, like a lightbox.
+    static let viewerCanvas = Color(red: 0x08 / 255.0, green: 0x09 / 255.0, blue: 0x0c / 255.0)
+    static let viewerPanel = Color(red: 0x1b / 255.0, green: 0x1d / 255.0, blue: 0x24 / 255.0)
+    static let viewerControl = Color(red: 0x2c / 255.0, green: 0x2f / 255.0, blue: 0x38 / 255.0)
+    static let viewerSoft = Color(red: 0xc3 / 255.0, green: 0xc7 / 255.0, blue: 0xd1 / 255.0)
+    static let viewerAway = Color(red: 0xff / 255.0, green: 0x85 / 255.0, blue: 0x85 / 255.0)
+
     /// Only the app icon still uses this.
     static let gradient = LinearGradient(colors: [Color(red: 0.37, green: 0.34, blue: 0.94), Color(red: 0.16, green: 0.68, blue: 0.86)],
                                          startPoint: .topLeading, endPoint: .bottomTrailing)

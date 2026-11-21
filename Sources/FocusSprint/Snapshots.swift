@@ -32,6 +32,15 @@ enum Snapshots {
         let answerNo = RequestAnswer(id: "2", host: "espn.com", decision: "deny", minutes: 0,
                                      explanation: "ESPN is a sports site and doesn't offer chemistry study material, so this reason doesn't fit what the site is for.",
                                      allowedUntil: nil)
+        let sampleApps = [
+            AppEntry(bundleId: "com.apple.Music", name: "Music", state: "distraction", reason: "Music and entertainment"),
+            AppEntry(bundleId: "com.apple.MobileSMS", name: "Messages", state: "distraction", reason: "Chat and social"),
+            AppEntry(bundleId: "com.apple.dt.Xcode", name: "Xcode", state: "work", reason: "Coding tool"),
+            AppEntry(bundleId: "com.apple.iWork.Numbers", name: "Numbers", state: "work", reason: "Spreadsheets"),
+            AppEntry(bundleId: "com.apple.Notes", name: "Notes", state: "work", reason: "Writing and notes"),
+            AppEntry(bundleId: "com.apple.calculator", name: "Calculator", state: "neutral", reason: "Utility"),
+            AppEntry(bundleId: "com.apple.Preview", name: "Preview", state: "neutral", reason: "Viewing files"),
+        ]
         func app(_ pane: Pane) -> AnyView { AnyView(ContentView(pane: pane).environmentObject(engine)) }
         func padded<V: View>(_ view: V) -> AnyView { AnyView(view.padding(30).background(Color(white: 0.5).opacity(0.25))) }
 
@@ -47,6 +56,10 @@ enum Snapshots {
             Shot(name: "4-history", size: CGSize(width: 1040, height: 900), prepare: { engine.debugPreview("idle") }, view: { app(.history) }),
             Shot(name: "5-parent", size: window, view: { app(.parent) }),
             Shot(name: "5b-apps", size: CGSize(width: 1040, height: 900), prepare: { engine.debugPreview("idle") }, view: { app(.apps) }),
+            Shot(name: "5c-apps-admin", size: CGSize(width: 1040, height: 1000), prepare: { engine.debugPreview("idle") },
+                 view: { AnyView(ContentView(pane: .apps, sampleApps: AppList(apps: sampleApps, kids: sampleApps, canEdit: true)).environmentObject(engine)) }),
+            Shot(name: "5d-apps-kid", size: CGSize(width: 1040, height: 1000), prepare: { engine.debugPreview("idle") },
+                 view: { AnyView(ContentView(pane: .apps, sampleApps: AppList(apps: sampleApps)).environmentObject(engine)) }),
             Shot(name: "6-widget-away", size: CGSize(width: 304, height: 300), prepare: { engine.debugPreview("away") },
                  view: { padded(MeterView(engine: engine)) }),
             Shot(name: "7-widget-calm", size: CGSize(width: 304, height: 180), prepare: { engine.debugPreview("idle") },

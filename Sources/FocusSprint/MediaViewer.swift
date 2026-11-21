@@ -46,17 +46,17 @@ struct MediaViewerOverlay: View {
     var body: some View {
         if let item = viewer.current {
             ZStack {
-                Color.black.opacity(0.92).ignoresSafeArea().onTapGesture { viewer.close() }
-                VStack(spacing: 14) {
+                Theme.viewerCanvas.ignoresSafeArea().onTapGesture { viewer.close() }
+                VStack(spacing: 12) {
                     header(item)
-                    HStack(spacing: 14) {
+                    HStack(spacing: 12) {
                         arrow("chevron.left", enabled: viewer.hasPrevious, help: "Previous (left arrow)") { viewer.previous() }
                         media(item).frame(maxWidth: .infinity, maxHeight: .infinity)
                         arrow("chevron.right", enabled: viewer.hasNext, help: "Next (right arrow)") { viewer.next() }
                     }
                     details(item)
                 }
-                .padding(20)
+                .padding(EdgeInsets(top: 46, leading: 16, bottom: 16, trailing: 16))
                 keyboard
             }
             .task(id: item.id) { await load(item) }
@@ -65,77 +65,68 @@ struct MediaViewerOverlay: View {
     }
 
     private func header(_ item: ViewerItem) -> some View {
-        let tint = item.event.category == .distraction ? Theme.bad : Theme.warn
-        return HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 8) {
-                    Text(item.event.host ?? item.event.appName).font(Theme.title(20)).foregroundStyle(.white)
-                    Text(item.event.category == .distraction ? "Distraction" : "Off task")
-                        .font(.system(size: 11, weight: .semibold)).foregroundStyle(.white)
-                        .padding(.horizontal, 9).padding(.vertical, 4).background(tint, in: Capsule())
-                    Text(item.ref.role == .start ? "First seconds" : "Last seconds")
-                        .font(.system(size: 11, weight: .semibold)).foregroundStyle(.white)
-                        .padding(.horizontal, 9).padding(.vertical, 4).background(.white.opacity(0.18), in: Capsule())
-                }
-                Text(item.event.host != nil && !item.event.title.isEmpty ? "\(item.event.appName) · \(item.event.title)" : item.event.appName)
-                    .font(.system(size: 12)).foregroundStyle(.white.opacity(0.7)).lineLimit(1)
-            }
-            Spacer()
-            Text("\(viewer.index + 1) of \(viewer.items.count)").font(Theme.number(14)).foregroundStyle(.white.opacity(0.8))
-            Button { NSWorkspace.shared.open(item.url) } label: {
-                Image(systemName: "arrow.up.forward.app").font(.system(size: 15, weight: .semibold))
-            }
-            .buttonStyle(ViewerIconButton()).help("Open the file in its own app")
-            Button { viewer.close() } label: { Image(systemName: "xmark").font(.system(size: 15, weight: .bold)) }
-                .buttonStyle(ViewerIconButton()).help("Close (Esc)")
+        HStack(spacing: 10) {
+            Text(item.event.host ?? item.event.appName).font(Theme.title(20)).foregroundStyle(.white).lineLimit(1)
+            tag(item.event.category == .distraction ? "Distraction" : "Off task")
+            tag(item.ref.role == .start ? "First seconds" : "Last seconds")
+            Text(item.event.host != nil && !item.event.title.isEmpty ? "\(item.event.appName) · \(item.event.title)" : item.event.appName)
+                .font(.system(size: 13)).foregroundStyle(Theme.viewerSoft).lineLimit(1)
+            Spacer(minLength: 8)
+            Text("\(viewer.index + 1) of \(viewer.items.count)").font(Theme.number(14)).foregroundStyle(Theme.viewerSoft)
+                .fixedSize()
+            Button("Open the file in its own app") { NSWorkspace.shared.open(item.url) }
+                .buttonStyle(ViewerTextButton())
+            Button { viewer.close() } label: { Image(systemName: "xmark").font(.system(size: 14, weight: .bold)) }
+                .buttonStyle(ViewerIconButton(size: 44)).help("Close (Esc)").accessibilityLabel("Close")
         }
+    }
+
+    private func tag(_ text: String) -> some View {
+        Text(text).font(.system(size: 11.5, weight: .bold)).foregroundStyle(.white).fixedSize()
+            .padding(.horizontal, 10).padding(.vertical, 3).background(Theme.viewerControl, in: PillShape())
     }
 
     @ViewBuilder
     private func media(_ item: ViewerItem) -> some View {
         if item.ref.kind == .video, let player {
-            VideoPlayer(player: player).clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            VideoPlayer(player: player).clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         } else if let image {
             Image(nsImage: image).resizable().aspectRatio(contentMode: .fit)
-                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                .shadow(color: .black.opacity(0.5), radius: 20)
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         } else {
-            Text(failed ? "This picture is not available." : "Loading…").font(.system(size: 14)).foregroundStyle(.white.opacity(0.7))
+            RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Theme.viewerPanel)
+                .overlay(Text(failed ? "This picture is not available." : "Loading…").font(.system(size: 14)).foregroundStyle(Theme.viewerSoft))
         }
     }
 
     /// Date, start, time away and end, spelled out under the picture.
     private func details(_ item: ViewerItem) -> some View {
-        let tint = item.event.category == .distraction ? Theme.bad : Theme.warn
-        return HStack(spacing: 0) {
+        HStack(spacing: 32) {
             field("Date", item.event.startedAt.formatted(date: .complete, time: .omitted), .white)
-            divider
             field("Started", Format.clock(item.event.startedAt), .white)
-            divider
-            field("Away for", Format.duration(item.event.durationSeconds), tint)
-            divider
+            field("Away for", Format.duration(item.event.durationSeconds), Theme.viewerAway)
             field("Ended", Format.clock(item.event.endedAt), .white)
             Spacer(minLength: 0)
+            Text("Left and right arrow keys move between pictures · Esc closes")
+                .font(.system(size: 12)).foregroundStyle(Theme.viewerSoft).lineLimit(2).multilineTextAlignment(.trailing)
         }
         .padding(.horizontal, 18).padding(.vertical, 12)
-        .background(.white.opacity(0.10), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .background(Theme.viewerPanel, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
-
-    private var divider: some View { Rectangle().fill(.white.opacity(0.18)).frame(width: 1, height: 32).padding(.horizontal, 18) }
 
     private func field(_ label: String, _ value: String, _ color: Color) -> some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text(label.uppercased()).font(.system(size: 10, weight: .semibold)).kerning(0.6).foregroundStyle(.white.opacity(0.6))
+            Text(label).font(.system(size: 10.5, weight: .semibold)).foregroundStyle(Theme.viewerSoft)
             Text(value).font(Theme.number(18)).foregroundStyle(color).lineLimit(1).minimumScaleFactor(0.7)
         }
     }
 
     private func arrow(_ symbol: String, enabled: Bool, help: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) { Image(systemName: symbol).font(.system(size: 18, weight: .bold)) }
+        Button(action: action) { Image(systemName: symbol).font(.system(size: 15, weight: .bold)) }
             .buttonStyle(ViewerIconButton(size: 44))
-            .opacity(enabled ? 1 : 0.25)
             .disabled(!enabled)
             .help(help)
+            .accessibilityLabel(symbol == "chevron.left" ? "Previous" : "Next")
     }
 
     /// Invisible buttons that give the viewer its keyboard shortcuts.
@@ -168,11 +159,24 @@ struct MediaViewerOverlay: View {
 
 struct ViewerIconButton: ButtonStyle {
     var size: CGFloat = 34
+    @Environment(\.isEnabled) private var enabled
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .foregroundStyle(.white)
+            .foregroundStyle(enabled ? Color.white : Color(white: 0.5))
             .frame(width: size, height: size)
-            .background(.white.opacity(configuration.isPressed ? 0.30 : 0.16), in: Circle())
+            .background(enabled ? Theme.viewerControl : Theme.viewerPanel, in: Circle())
+            .opacity(configuration.isPressed ? 0.7 : 1)
             .contentShape(Circle())
+    }
+}
+
+struct ViewerTextButton: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: 13, weight: .semibold)).foregroundStyle(.white).lineLimit(1).fixedSize()
+            .padding(.horizontal, 14).frame(height: 40)
+            .background(Theme.viewerControl, in: PillShape())
+            .opacity(configuration.isPressed ? 0.7 : 1)
+            .contentShape(PillShape())
     }
 }

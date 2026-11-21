@@ -123,6 +123,8 @@ struct ContentView: View {
     @State private var status = HelperStatus.load()
     private let statusTimer = Ticker.every2
     @State var pane: Pane = Pane(rawValue: ProcessInfo.processInfo.environment["FOCUSSPRINT_PANE"] ?? "") ?? .focus
+    /// Development snapshots only: made-up app lists for the Apps screen.
+    var sampleApps: AppList?
 
     var body: some View {
         HStack(spacing: 0) {
@@ -132,7 +134,7 @@ struct ContentView: View {
                 switch pane {
                 case .focus: SprintView()
                 case .history: HistoryView()
-                case .apps: AppsView()
+                case .apps: AppsView(sample: sampleApps)
                 case .parent: SettingsView()
                 }
             }

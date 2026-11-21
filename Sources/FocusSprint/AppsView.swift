@@ -5,6 +5,8 @@ import FocusSprintCore
 /// household admin or co-admin can also switch to the kids' list and change that. A change is handed to the
 /// helper, which tells the service which Mac login asked; the service decides whether that login may.
 struct AppsView: View {
+    /// Development snapshots only: made-up lists to draw instead of the ones on disk.
+    var sample: AppList?
     @State private var status = HelperStatus.load()
     @State private var lists = AppList.load()
     @State private var showKids = false
@@ -34,12 +36,13 @@ struct AppsView: View {
     ]
     private static let labels = [("distraction", "Distraction"), ("work", "Work app"), ("neutral", "Other app")]
 
-    private var managesKids: Bool { lists.kids != nil }
+    private var shown: AppList { sample ?? lists }
+    private var managesKids: Bool { shown.kids != nil }
     private var onKids: Bool { managesKids && showKids }
-    private var editable: Bool { onKids || lists.canEdit == true }
+    private var editable: Bool { onKids || shown.canEdit == true }
     private var listKey: String { onKids ? "kids" : "mine" }
     private var entries: [AppEntry] {
-        (onKids ? lists.kids ?? [] : lists.apps).map { entry in
+        (onKids ? shown.kids ?? [] : shown.apps).map { entry in
             var entry = entry
             if let changed = pending["\(listKey)|\(entry.id)"] { entry.state = changed }
             return entry
@@ -49,21 +52,19 @@ struct AppsView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Apps").font(Theme.title(30))
+            VStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Apps").font(Theme.title(34)).kerning(-0.8).foregroundStyle(Theme.ink)
                     Text("Which apps count as a distraction, and which do not. Nothing is ever blocked.")
-                        .font(.system(size: 14)).foregroundStyle(.secondary)
+                        .font(.system(size: 14)).foregroundStyle(Theme.soft)
                 }
                 if managesKids {
-                    HStack(spacing: 8) {
-                        Chip(title: "My own apps", selected: !showKids) { showKids = false }
-                        Chip(title: "The kids' apps", selected: showKids) { showKids = true }
-                    }
-                    .frame(maxWidth: 360)
+                    Segments(label: "Whose list", options: [(value: false, title: "My own apps"), (value: true, title: "The kids' apps")],
+                             selection: $showKids, height: 34)
+                        .frame(maxWidth: 320)
                 }
                 if entries.isEmpty {
-                    Notice(text: status?.linked == true
+                    Notice(text: status?.linked == true || sample != nil
                            ? (onKids ? "No apps have been seen on the kids' logins yet. Each app gets a label the first time it is used."
                                      : "No apps have been labelled yet. Each app gets a label the first time you use it.")
                            : "Apps are labelled once this Mac is linked to a household. Until then only a short built-in list of apps counts as distraction.",
@@ -71,14 +72,14 @@ struct AppsView: View {
                 }
                 if !entries.isEmpty {
                     section(distractions)
-                    Text("NOT DISTRACTIONS").font(.system(size: 11, weight: .bold)).kerning(0.8).foregroundStyle(.secondary)
-                        .padding(.top, 6)
+                    Text("Not distractions").font(.system(size: 12, weight: .bold)).foregroundStyle(Theme.soft)
+                        .padding(.top, 4)
                     ForEach(notDistractions) { section($0) }
                 }
-                Text(footnote).font(.system(size: 12)).foregroundStyle(.secondary)
+                Text(footnote).font(.system(size: 12)).foregroundStyle(Theme.soft)
             }
-            .padding(28)
-            .frame(maxWidth: 680, alignment: .leading)
+            .padding(EdgeInsets(top: 44, leading: 30, bottom: 24, trailing: 30))
+            .frame(maxWidth: 860, alignment: .leading)
             .frame(maxWidth: .infinity)
         }
         .onAppear(perform: reload)
@@ -94,32 +95,38 @@ struct AppsView: View {
 
     private func section(_ group: Group) -> some View {
         let list = entries.filter { $0.state == group.id }
-        return VStack(alignment: .leading, spacing: 10) {
+        return VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text(group.title).font(.system(size: 15, weight: .bold)).foregroundStyle(group.tint)
-                Text("\(list.count)").font(.system(size: 12, weight: .semibold)).foregroundStyle(.secondary)
+                Text(group.title).font(Theme.title(17)).foregroundStyle(Theme.text(for: group.tint))
+                Text("\(list.count)").font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.soft)
             }
-            Text(group.detail).font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            Text(group.detail).font(.system(size: 12)).foregroundStyle(Theme.soft).fixedSize(horizontal: false, vertical: true)
+                .padding(.top, 2).padding(.bottom, 8)
             if list.isEmpty {
-                Text(group.empty).font(.system(size: 13)).foregroundStyle(.tertiary).padding(.vertical, 2)
+                Text(group.empty).font(.system(size: 13)).foregroundStyle(Theme.soft).padding(.bottom, 8)
             }
-            ForEach(list) { app in row(app) }
+            ForEach(list) { app in
+                Rectangle().fill(Theme.hairline).frame(height: 1)
+                row(app).padding(.vertical, 9)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .card()
+        .padding(EdgeInsets(top: 16, leading: 18, bottom: 6, trailing: 18))
+        .background(Theme.surface, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(Theme.hairline))
     }
 
     private func row(_ app: AppEntry) -> some View {
-        HStack(alignment: .top, spacing: 10) {
+        HStack(alignment: .center, spacing: 12) {
             if let icon = AppIcons.icon(bundleId: app.bundleId) {
-                Image(nsImage: icon).resizable().frame(width: 24, height: 24)
+                Image(nsImage: icon).resizable().frame(width: 30, height: 30)
             } else {
-                Image(systemName: "app").font(.system(size: 18)).frame(width: 24, height: 24).foregroundStyle(.secondary)
+                Image(systemName: "app").font(.system(size: 20)).frame(width: 30, height: 30).foregroundStyle(Theme.soft)
             }
-            VStack(alignment: .leading, spacing: 2) {
-                Text(app.name).font(.system(size: 14, weight: .semibold))
+            VStack(alignment: .leading, spacing: 1) {
+                Text(app.name).font(.system(size: 14, weight: .semibold)).foregroundStyle(Theme.ink)
                 if let reason = app.reason, !reason.isEmpty {
-                    Text(reason).font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    Text(reason).font(.system(size: 12)).foregroundStyle(Theme.soft).fixedSize(horizontal: false, vertical: true)
                 }
             }
             Spacer(minLength: 8)
@@ -175,16 +182,17 @@ private struct LabelMenu: View {
     var body: some View {
         let current = LabelMenu.options.first { $0.id == state } ?? LabelMenu.options[2]
         Button { open.toggle() } label: {
-            HStack(spacing: 6) {
-                Circle().fill(current.tint).frame(width: 7, height: 7)
-                Text(current.title).font(.system(size: 12.5, weight: .semibold)).foregroundStyle(current.tint)
-                Image(systemName: "chevron.down").font(.system(size: 8.5, weight: .bold)).foregroundStyle(current.tint.opacity(0.7))
+            HStack(spacing: 7) {
+                Text(current.title).font(.system(size: 12.5, weight: .bold))
+                Image(systemName: "chevron.down").font(.system(size: 8.5, weight: .bold))
                     .rotationEffect(.degrees(open ? 180 : 0))
             }
-            .padding(.horizontal, 11).padding(.vertical, 6)
-            .background(current.tint.opacity(hovering || open ? 0.20 : 0.12), in: Capsule())
-            .overlay(Capsule().strokeBorder(current.tint.opacity(0.25)))
-            .contentShape(Capsule())
+            .foregroundStyle(Theme.text(for: current.tint))
+            .padding(.horizontal, 12).frame(height: 32)
+            .background(Theme.fill(for: current.tint), in: PillShape())
+            .overlay(PillShape().strokeBorder(Theme.text(for: current.tint), lineWidth: 1.5))
+            .opacity(hovering || open ? 0.85 : 1)
+            .contentShape(PillShape())
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
@@ -200,7 +208,8 @@ private struct LabelMenu: View {
                 }
             }
             .padding(6)
-            .frame(width: 290)
+            .frame(width: 300)
+            .background(Theme.surface)
         }
     }
 }
@@ -216,15 +225,15 @@ private struct LabelChoice: View {
             HStack(spacing: 10) {
                 Circle().fill(option.tint).frame(width: 9, height: 9)
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(option.title).font(.system(size: 13, weight: .semibold))
-                    Text(option.detail).font(.system(size: 11.5)).foregroundStyle(.secondary)
+                    Text(option.title).font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.ink)
+                    Text(option.detail).font(.system(size: 11.5)).foregroundStyle(Theme.soft)
                 }
                 Spacer(minLength: 8)
-                if selected { Image(systemName: "checkmark").font(.system(size: 11, weight: .bold)).foregroundStyle(option.tint) }
+                if selected { Image(systemName: "checkmark").font(.system(size: 11, weight: .bold)).foregroundStyle(Theme.text(for: option.tint)) }
             }
-            .padding(.horizontal, 10).padding(.vertical, 7)
-            .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(hovering ? option.tint.opacity(0.12) : .clear))
-            .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .padding(.horizontal, 10).padding(.vertical, 8)
+            .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(hovering || selected ? Theme.raised : .clear))
+            .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
