@@ -68,7 +68,11 @@ struct FocusSprintApp: App {
             ContentView()
                 .environmentObject(engine)
                 .frame(minWidth: 940, minHeight: 640)
+                // No title bar: content runs to the top edge, under the close, minimise and zoom buttons.
+                // The strip they sit in still drags the window; every screen starts its content 44pt down.
+                .ignoresSafeArea(.container, edges: .top)
         }
+        .windowStyle(.hiddenTitleBar)
         MenuBarExtra {
             MenuContent().environmentObject(engine)
         } label: {
@@ -144,42 +148,39 @@ struct ContentView: View {
 
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 9) {
-                Image(systemName: "scope")
+            HStack(spacing: 10) {
+                Image(systemName: "timer")
                     .font(.system(size: 15, weight: .bold))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(Theme.onBrand)
                     .frame(width: 30, height: 30)
-                    .background(Theme.gradient, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .background(Theme.brand, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                 VStack(alignment: .leading, spacing: 0) {
-                    Text("YoungWonks").font(.system(size: 13, weight: .bold, design: .rounded))
-                    Text("Focus").font(.system(size: 11)).foregroundStyle(.secondary)
+                    Text("YoungWonks").font(.system(size: 14, weight: .bold))
+                    Text("Focus").font(.system(size: 11.5)).foregroundStyle(Theme.soft)
                 }
             }
             .padding(.horizontal, 6)
             .padding(.bottom, 14)
+            .accessibilityElement(children: .combine)
 
             ForEach(Pane.allCases) { item in
                 Button { pane = item } label: {
-                    HStack(spacing: 9) {
-                        Image(systemName: item.icon).font(.system(size: 13, weight: .medium)).frame(width: 18)
-                        Text(item.rawValue).font(.system(size: 13, weight: pane == item ? .semibold : .regular))
-                        Spacer()
-                    }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 7)
-                    .foregroundStyle(pane == item ? Theme.brand : Color.primary)
-                    .background(pane == item ? Theme.brand.opacity(0.12) : Color.clear,
-                                in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                    .contentShape(Rectangle())
+                    Text(item.rawValue).font(.system(size: 14, weight: .semibold))
+                        .padding(.horizontal, 16)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .frame(height: 38)
+                        .foregroundStyle(pane == item ? Theme.canvas : Theme.soft)
+                        .background(pane == item ? Theme.ink : Color.clear, in: Capsule())
+                        .contentShape(Capsule())
                 }
                 .buttonStyle(.plain)
+                .accessibilityAddTraits(pane == item ? .isSelected : [])
             }
             Spacer()
             TodayCard()
         }
-        .padding(12)
-        .frame(width: 204)
-        .background(.regularMaterial)
+        .padding(EdgeInsets(top: 46, leading: 12, bottom: 12, trailing: 12))
+        .frame(width: 216)
     }
 }
 
@@ -190,22 +191,26 @@ struct TodayCard: View {
     var body: some View {
         let _ = engine.pulse
         let level = engine.todayDistraction
-        VStack(alignment: .leading, spacing: 10) {
-            SectionLabel(text: "Today")
-            HStack(spacing: 12) {
-                ZStack {
-                    Ring(progress: level, lineWidth: 6, tint: levelColor(level))
-                    Text("\(Int((level * 100).rounded()))%").font(Theme.number(13))
-                }
-                .frame(width: 50, height: 50)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("distracted").font(.system(size: 12, weight: .medium))
-                    Text("\(engine.todaySwitches) switches").font(.system(size: 11)).foregroundStyle(.secondary)
-                    Text("\(Format.duration(engine.todayAway)) away").font(.system(size: 11)).foregroundStyle(.secondary)
-                }
-            }
+        let percent = Int((level * 100).rounded())
+        VStack(alignment: .leading, spacing: 0) {
+            Text("Today").font(Theme.title(22)).foregroundStyle(Theme.ink)
+            // Very large for one or two digits; shrinks to fit the card at 100%.
+            (Text("\(percent)").font(.system(size: 100, weight: .bold)).kerning(-4)
+             + Text("%").font(.system(size: 40, weight: .bold)))
+                .monospacedDigit()
+                .foregroundStyle(levelColor(level))
+                .lineLimit(1)
+                .minimumScaleFactor(0.4)
+                .frame(height: 96)
+                .padding(.top, 4)
+                .accessibilityLabel("\(percent) percent")
+            Text("distracted").font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.ink)
+            Text("\(engine.todaySwitches) switches · \(Format.duration(engine.todayAway)) away")
+                .font(.system(size: 11.5)).foregroundStyle(Theme.soft)
+                .lineLimit(1).minimumScaleFactor(0.8)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .card(padding: 12, radius: 12)
+        .card(padding: 14)
+        .accessibilityElement(children: .combine)
     }
 }

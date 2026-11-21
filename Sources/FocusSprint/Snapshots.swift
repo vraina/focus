@@ -18,6 +18,13 @@ enum Snapshots {
     static func run(to folder: URL) {
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let engine = SprintEngine.shared
+        // A filled-in setup screen, for this run only: nothing here is saved.
+        let sample = [AllowedApp(bundleId: "com.apple.Notes", name: "Notes"), AllowedApp(bundleId: "com.apple.Preview", name: "Preview"),
+                      AllowedApp(bundleId: "com.apple.Terminal", name: "Terminal")]
+        UserDefaults.standard.setVolatileDomain([
+            "task": "Python lesson project", "minutes": 60, "domains": "docs.python.org, replit.com, stackoverflow.com",
+            "allowedApps": String(data: (try? JSONEncoder().encode(sample)) ?? Data(), encoding: .utf8) ?? "[]",
+        ], forName: UserDefaults.argumentDomain)
         let window = CGSize(width: 1040, height: 760)
         let answerYes = RequestAnswer(id: "1", host: "youtube.com", decision: "approve_temporary", minutes: 45,
                                       explanation: "Approved for 45 minutes to watch the recorded physics lecture for Thursday's class. That is a specific school task YouTube can serve.",
@@ -29,7 +36,7 @@ enum Snapshots {
         func padded<V: View>(_ view: V) -> AnyView { AnyView(view.padding(30).background(Color(white: 0.5).opacity(0.25))) }
 
         let shots: [Shot] = [
-            Shot(name: "1-focus-setup", size: window, prepare: { engine.debugPreview("idle") }, view: { app(.focus) }),
+            Shot(name: "1-focus-setup", size: CGSize(width: 1040, height: 1000), prepare: { engine.debugPreview("idle") }, view: { app(.focus) }),
             Shot(name: "2-focus-running", size: window, prepare: { engine.debugPreview("running") }, view: { app(.focus) }),
             Shot(name: "2b-focus-open", size: window, prepare: { engine.debugPreview("open") }, view: { app(.focus) }),
             Shot(name: "7d-widget-open", size: CGSize(width: 304, height: 240), prepare: { engine.debugPreview("open") },
@@ -52,10 +59,6 @@ enum Snapshots {
                  view: { padded(AnswerDialog(answer: answerYes, onClose: {})) }),
             Shot(name: "10-dialog-denied", size: CGSize(width: 500, height: 330),
                  view: { padded(AnswerDialog(answer: answerNo, onClose: {})) }),
-            Shot(name: "11-focus-setup-dark", size: window, dark: true, prepare: { engine.debugPreview("idle") }, view: { app(.focus) }),
-            Shot(name: "12-history-dark", size: CGSize(width: 1040, height: 900), dark: true, view: { app(.history) }),
-            Shot(name: "13-widget-away-dark", size: CGSize(width: 304, height: 300), dark: true,
-                 prepare: { engine.debugPreview("away") }, view: { padded(MeterView(engine: engine)) }),
             Shot(name: "14-viewer", size: CGSize(width: 1040, height: 760), prepare: {
                 engine.debugPreview("idle")
                 let folder = Paths.vault.appendingPathComponent("sprints")
@@ -74,9 +77,21 @@ enum Snapshots {
             Shot(name: "AppIcon", size: CGSize(width: 1024, height: 1024), view: { AnyView(AppIconArt()) }),
         ]
         Task { @MainActor in
-            for shot in shots {
-                shot.prepare()
-                await render(shot, to: folder.appendingPathComponent(shot.name + ".png"))
+            // Every screen in both appearances: light/<name>.png and dark/<name>.png. FOCUSSPRINT_SHOTS=a,b
+            // limits the run to the screens whose names contain one of those words.
+            let only = (ProcessInfo.processInfo.environment["FOCUSSPRINT_SHOTS"] ?? "").split(separator: ",").map(String.init)
+            for dark in [false, true] {
+                let sub = folder.appendingPathComponent(dark ? "dark" : "light")
+                try? FileManager.default.createDirectory(at: sub, withIntermediateDirectories: true)
+                for var shot in shots where only.isEmpty || only.contains(where: { shot.name.contains($0) }) {
+                    if shot.name == "AppIcon" {
+                        if !dark { await render(shot, to: folder.appendingPathComponent("AppIcon.png")) }
+                        continue
+                    }
+                    shot.dark = dark
+                    shot.prepare()
+                    await render(shot, to: sub.appendingPathComponent(shot.name + ".png"))
+                }
             }
             exit(0)
         }
@@ -96,7 +111,7 @@ enum Snapshots {
         let window = NSWindow(contentRect: frame, styleMask: [.borderless], backing: .buffered, defer: false)
         window.appearance = NSAppearance(named: shot.dark ? .darkAqua : .aqua)
         window.isOpaque = shot.name != "AppIcon"
-        window.backgroundColor = shot.name == "AppIcon" ? .clear : .windowBackgroundColor
+        window.backgroundColor = shot.name == "AppIcon" ? .clear : NSColor(Theme.canvas)
         let host = NSHostingView(rootView: shot.view().frame(width: shot.size.width, height: shot.size.height))
         host.frame = NSRect(origin: .zero, size: shot.size)
         window.contentView = host
