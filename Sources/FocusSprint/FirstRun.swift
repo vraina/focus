@@ -151,7 +151,7 @@ struct FirstRunView: View {
                 Button("Open the website") {
                     if let url = URL(string: ServiceConfig.baseURL) { NSWorkspace.shared.open(url) }
                 }
-                .buttonStyle(OutlineButtonStyle(height: 46, wide: true))
+                .buttonStyle(PrimaryButtonStyle(height: 46))
                 Button("Link later. Sprints still work and are kept here.") {
                     FirstRun.skipped.insert(.link)
                     advance()
